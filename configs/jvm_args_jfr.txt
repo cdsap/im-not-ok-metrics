@@ -1,0 +1,1 @@
+-XX:StartFlightRecording=filename={jfr_path},settings=profile,dumponexit=true

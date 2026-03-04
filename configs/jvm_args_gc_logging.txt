@@ -1,0 +1,1 @@
+-Xlog:gc*,gc+heap=debug,gc+age=trace,safepoint:file={gc_log_path}:time,uptime,level,tags

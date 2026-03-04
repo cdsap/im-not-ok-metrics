@@ -1,0 +1,366 @@
+#!/usr/bin/env python3
+
+from __future__ import annotations
+
+import csv
+import json
+import math
+import re
+import statistics
+import sys
+from collections import defaultdict
+from datetime import datetime, timezone
+from pathlib import Path
+
+
+ISO_FORMATS = ("%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%dT%H:%M:%S.%fZ")
+
+
+def parse_ts(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    for fmt in ISO_FORMATS:
+      try:
+        return datetime.strptime(value, fmt).replace(tzinfo=timezone.utc)
+      except ValueError:
+        pass
+    return None
+
+
+def percentile(values: list[float], pct: float) -> float | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    if len(ordered) == 1:
+        return ordered[0]
+    rank = (len(ordered) - 1) * pct
+    lower = math.floor(rank)
+    upper = math.ceil(rank)
+    if lower == upper:
+        return ordered[lower]
+    weight = rank - lower
+    return ordered[lower] * (1 - weight) + ordered[upper] * weight
+
+
+def safe_float(value: str | None) -> float | None:
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except ValueError:
+        return None
+
+
+def safe_int(value: str | None) -> int | None:
+    if value in (None, ""):
+        return None
+    try:
+        return int(float(value))
+    except ValueError:
+        return None
+
+
+def load_metadata(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    return json.loads(path.read_text())
+
+
+def load_pid_roles(path: Path) -> dict[str, dict]:
+    roles: dict[str, dict] = {}
+    if not path.exists():
+        return roles
+    with path.open() as fh:
+        reader = csv.DictReader(fh)
+        for row in reader:
+            pid = row.get("pid")
+            if not pid:
+                continue
+            roles[pid] = {
+                "role": row.get("role") or "unknown",
+                "command": row.get("command") or "",
+                "last_seen": row.get("timestamp"),
+            }
+    return roles
+
+
+def summarize_process_metrics(path: Path) -> tuple[dict[str, dict], list[dict]]:
+    per_pid: dict[str, dict] = {}
+    rows: list[dict] = []
+    if not path.exists():
+        return per_pid, rows
+
+    buckets: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
+    peaks: dict[str, dict] = {}
+
+    with path.open() as fh:
+        reader = csv.DictReader(fh)
+        for row in reader:
+            rows.append(row)
+            pid = row["pid"]
+            rss = safe_float(row.get("rss_kb"))
+            cpu = safe_float(row.get("cpu_pct"))
+            role = row.get("role") or "unknown"
+            if rss is not None:
+                buckets[pid]["rss"].append(rss)
+            if cpu is not None:
+                buckets[pid]["cpu"].append(cpu)
+            buckets[pid]["role"] = [role]
+
+            current_peak = peaks.get(pid)
+            if rss is not None and (current_peak is None or rss > current_peak["rss_kb"]):
+                peaks[pid] = {"rss_kb": rss, "timestamp": row.get("timestamp"), "role": role}
+
+    for pid, stats in buckets.items():
+        rss_values = stats.get("rss", [])
+        cpu_values = stats.get("cpu", [])
+        per_pid[pid] = {
+            "max_rss_kb": max(rss_values) if rss_values else None,
+            "avg_rss_kb": statistics.mean(rss_values) if rss_values else None,
+            "max_cpu_pct": max(cpu_values) if cpu_values else None,
+            "role": stats.get("role", ["unknown"])[0],
+            "peak_rss_timestamp": peaks.get(pid, {}).get("timestamp"),
+        }
+    return per_pid, rows
+
+
+PAUSE_PATTERNS = [
+    re.compile(r"Pause[^\\n]*?([0-9]+(?:\\.[0-9]+)?)(ms|s)\\b"),
+    re.compile(r"Total time for which application threads were stopped: ([0-9]+(?:\\.[0-9]+)?) seconds"),
+]
+
+
+def parse_gc_pauses(log_path: Path) -> list[float]:
+    pauses_ms: list[float] = []
+    if not log_path.exists():
+        return pauses_ms
+    for line in log_path.read_text(errors="ignore").splitlines():
+        for pattern in PAUSE_PATTERNS:
+            match = pattern.search(line)
+            if not match:
+                continue
+            value = float(match.group(1))
+            unit = match.group(2) if len(match.groups()) > 1 else "s"
+            pauses_ms.append(value * 1000 if unit == "s" else value)
+            break
+    return pauses_ms
+
+
+def summarize_gc(gc_dir: Path) -> dict[str, dict]:
+    stats: dict[str, dict] = {}
+    if not gc_dir.exists():
+        return stats
+    for path in sorted(gc_dir.glob("*.log")):
+        pauses = parse_gc_pauses(path)
+        pid_match = re.search(r"([0-9]+)", path.name)
+        pid = pid_match.group(1) if pid_match else path.stem
+        stats[pid] = {
+            "file": str(path),
+            "pause_count": len(pauses),
+            "p50_ms": percentile(pauses, 0.50),
+            "p95_ms": percentile(pauses, 0.95),
+            "p99_ms": percentile(pauses, 0.99),
+            "max_ms": max(pauses) if pauses else None,
+            "total_gc_time_ms": sum(pauses) if pauses else 0.0,
+        }
+    return stats
+
+
+TASK_PATTERN = re.compile(
+    r"^(?P<ts>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s+(?P<line>> Task (?P<task>:[^\s]+)(?:\s+(?P<outcome>[A-Z-]+))?.*)$"
+)
+SCAN_PATTERN = re.compile(r"https://gradle\.com/s/[A-Za-z0-9]+")
+
+
+def parse_task_timeline(stdout_path: Path, build_end: datetime | None) -> tuple[list[dict], str | None]:
+    tasks: list[dict] = []
+    scan_url = None
+    if not stdout_path.exists():
+        return tasks, scan_url
+
+    current: dict | None = None
+    for raw_line in stdout_path.read_text(errors="ignore").splitlines():
+        scan_match = SCAN_PATTERN.search(raw_line)
+        if scan_match:
+            scan_url = scan_match.group(0)
+
+        match = TASK_PATTERN.match(raw_line)
+        if not match:
+            continue
+        ts = parse_ts(match.group("ts"))
+        task_path = match.group("task")
+        outcome = match.group("outcome") or "SUCCESS"
+        if current and current["task_path"] != task_path:
+            current["end_time"] = match.group("ts")
+            tasks.append(current)
+            current = None
+        if current is None:
+            current = {
+                "task_path": task_path,
+                "start_time": match.group("ts"),
+                "end_time": match.group("ts"),
+                "outcome": outcome,
+            }
+        else:
+            current["end_time"] = match.group("ts")
+            current["outcome"] = outcome
+
+    if current:
+        current["end_time"] = (
+            build_end.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if build_end else current["end_time"]
+        )
+        tasks.append(current)
+    return tasks, scan_url
+
+
+def task_for_timestamp(tasks: list[dict], timestamp: str | None) -> str | None:
+    ts = parse_ts(timestamp)
+    if ts is None:
+        return None
+    for task in tasks:
+        start = parse_ts(task.get("start_time"))
+        end = parse_ts(task.get("end_time"))
+        if start and end and start <= ts <= end:
+            return task["task_path"]
+    return None
+
+
+def write_task_csv(path: Path, tasks: list[dict]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=["task_path", "start_time", "end_time", "outcome"])
+        writer.writeheader()
+        writer.writerows(tasks)
+
+
+def role_display(pid: str, pid_roles: dict[str, dict], process_summary: dict[str, dict]) -> str:
+    role = pid_roles.get(pid, {}).get("role") or process_summary.get(pid, {}).get("role") or "unknown"
+    return f"{role} (pid {pid})"
+
+
+def main() -> int:
+    if len(sys.argv) != 2:
+        print("Usage: summarize.py <artifacts/timestamp-dir>", file=sys.stderr)
+        return 1
+
+    artifact_dir = Path(sys.argv[1]).resolve()
+    metadata = load_metadata(artifact_dir / "metadata.json")
+    pid_roles = load_pid_roles(artifact_dir / "logs" / "os" / "discovered_pids.csv")
+    process_summary, process_rows = summarize_process_metrics(artifact_dir / "logs" / "os" / "process_metrics.csv")
+    gc_summary = summarize_gc(artifact_dir / "logs" / "gc")
+
+    build_started = parse_ts(metadata.get("build_started_at"))
+    build_finished = parse_ts(metadata.get("build_finished_at"))
+    build_duration = None
+    if build_started and build_finished:
+        build_duration = (build_finished - build_started).total_seconds()
+
+    tasks, scan_url = parse_task_timeline(artifact_dir / "logs" / "gradle_stdout.log", build_finished)
+    write_task_csv(artifact_dir / "gradle" / "task_timeline.csv", tasks)
+    if scan_url and "develocity_build_scan" not in metadata:
+        metadata["develocity_build_scan"] = scan_url
+        (artifact_dir / "metadata.json").write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n")
+
+    per_process = {}
+    for pid, proc_stats in process_summary.items():
+        gc_stats = gc_summary.get(pid)
+        peak_task = task_for_timestamp(tasks, proc_stats.get("peak_rss_timestamp"))
+        per_process[pid] = {
+            "role": pid_roles.get(pid, {}).get("role") or proc_stats.get("role"),
+            "command": pid_roles.get(pid, {}).get("command"),
+            "max_rss_kb": proc_stats.get("max_rss_kb"),
+            "avg_rss_kb": proc_stats.get("avg_rss_kb"),
+            "max_cpu_pct": proc_stats.get("max_cpu_pct"),
+            "peak_rss_timestamp": proc_stats.get("peak_rss_timestamp"),
+            "peak_task": peak_task,
+            "gc": gc_stats or {
+                "file": None,
+                "pause_count": 0,
+                "p50_ms": None,
+                "p95_ms": None,
+                "p99_ms": None,
+                "max_ms": None,
+                "total_gc_time_ms": 0.0,
+            },
+        }
+
+    correlations = []
+    for pid, proc in per_process.items():
+        if proc.get("peak_task"):
+            correlations.append(
+                {
+                    "pid": pid,
+                    "role": proc.get("role"),
+                    "task": proc.get("peak_task"),
+                    "peak_rss_kb": proc.get("max_rss_kb"),
+                    "peak_rss_timestamp": proc.get("peak_rss_timestamp"),
+                }
+            )
+
+    summary = {
+        "artifact_dir": str(artifact_dir),
+        "build_duration_seconds": build_duration,
+        "build_exit_code": metadata.get("build_exit_code"),
+        "develocity_build_scan": metadata.get("develocity_build_scan"),
+        "per_process": per_process,
+        "correlated_peaks": correlations,
+    }
+    (artifact_dir / "summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
+
+    lines = [
+        "# Build Profiling Summary",
+        "",
+        f"- Build duration: {build_duration:.2f}s" if build_duration is not None else "- Build duration: unavailable",
+        f"- Build exit code: {metadata.get('build_exit_code', 'unknown')}",
+        f"- JDK: {metadata.get('jdk_runtime') or 'unknown'}",
+        f"- Gradle: {metadata.get('gradle_version') or 'unknown'}",
+    ]
+    if metadata.get("develocity_build_scan"):
+        lines.append(f"- Build scan: {metadata['develocity_build_scan']}")
+    lines.extend(["", "## Per-process highlights", ""])
+
+    if per_process:
+        for pid, proc in sorted(per_process.items(), key=lambda item: ((item[1].get("role") or ""), item[0])):
+            gc = proc["gc"]
+            lines.append(
+                (
+                    f"- {role_display(pid, pid_roles, process_summary)}: "
+                    f"max RSS {proc.get('max_rss_kb') or 'n/a'} kB, "
+                    f"avg RSS {proc.get('avg_rss_kb') or 'n/a'} kB, "
+                    f"max CPU {proc.get('max_cpu_pct') or 'n/a'}%, "
+                    f"GC p95 {gc.get('p95_ms') or 'n/a'} ms, "
+                    f"GC max {gc.get('max_ms') or 'n/a'} ms, "
+                    f"total GC {gc.get('total_gc_time_ms') or 0.0} ms"
+                )
+            )
+    else:
+        lines.append("- No process metrics were collected.")
+
+    lines.extend(["", "## Correlated peaks", ""])
+    if correlations:
+        for correlation in correlations:
+            lines.append(
+                f"- {correlation['role']} pid {correlation['pid']} peaked near {correlation['task']} at {correlation['peak_rss_timestamp']}"
+            )
+    else:
+        lines.append("- No task correlation was derived.")
+
+    lines.extend(
+        [
+            "",
+            "## Artifacts",
+            "",
+            f"- Metadata: {artifact_dir / 'metadata.json'}",
+            f"- GC logs: {artifact_dir / 'logs' / 'gc'}",
+            f"- JFR: {artifact_dir / 'logs' / 'jfr'}",
+            f"- OS metrics: {artifact_dir / 'logs' / 'os' / 'process_metrics.csv'}",
+            f"- Task timeline: {artifact_dir / 'gradle' / 'task_timeline.csv'}",
+        ]
+    )
+
+    (artifact_dir / "summary.md").write_text("\n".join(lines) + "\n")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
