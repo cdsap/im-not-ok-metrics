@@ -3,11 +3,13 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+HARNESS_ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+PROJECT_ROOT="${PROJECT_ROOT:-$HARNESS_ROOT_DIR}"
+PROJECT_ROOT="$(cd "$PROJECT_ROOT" && pwd)"
 
 BUILD_CMD="${*:-./gradlew assembleDebug}"
 TIMESTAMP="$(date -u +"%Y%m%dT%H%M%SZ")"
-ARTIFACT_DIR="${ARTIFACT_DIR:-$ROOT_DIR/artifacts/$TIMESTAMP}"
+ARTIFACT_DIR="${ARTIFACT_DIR:-$PROJECT_ROOT/artifacts/$TIMESTAMP}"
 LOG_DIR="$ARTIFACT_DIR/logs"
 GC_DIR="$LOG_DIR/gc"
 JFR_DIR="$LOG_DIR/jfr"
@@ -20,9 +22,9 @@ PROCESS_METRICS_FILE="$OS_DIR/process_metrics.csv"
 SYSTEM_METRICS_FILE="$OS_DIR/system_metrics.csv"
 STDOUT_LOG="$LOG_DIR/gradle_stdout.log"
 STDERR_LOG="$LOG_DIR/gradle_stderr.log"
-GC_ARGS_TEMPLATE_FILE="$ROOT_DIR/configs/jvm_args_gc_logging.txt"
-JFR_ARGS_TEMPLATE_FILE="$ROOT_DIR/configs/jvm_args_jfr.txt"
-SAMPLING_CONFIG_FILE="$ROOT_DIR/configs/sampling_config.env"
+GC_ARGS_TEMPLATE_FILE="$HARNESS_ROOT_DIR/configs/jvm_args_gc_logging.txt"
+JFR_ARGS_TEMPLATE_FILE="$HARNESS_ROOT_DIR/configs/jvm_args_jfr.txt"
+SAMPLING_CONFIG_FILE="$HARNESS_ROOT_DIR/configs/sampling_config.env"
 DEEP="${DEEP:-0}"
 ENABLE_JCMD_ATTACH="${ENABLE_JCMD_ATTACH:-1}"
 ENABLE_JCMD_DYNAMIC_GC_LOGS="${ENABLE_JCMD_DYNAMIC_GC_LOGS:-1}"
@@ -80,14 +82,14 @@ detect_cgroup_limit() {
 }
 
 extract_wrapper_gradle_version() {
-  if [[ -f "$ROOT_DIR/gradle/wrapper/gradle-wrapper.properties" ]]; then
-    sed -nE 's#.*gradle-([0-9.]+)-.*#\1#p' "$ROOT_DIR/gradle/wrapper/gradle-wrapper.properties" | head -n1
+  if [[ -f "$PROJECT_ROOT/gradle/wrapper/gradle-wrapper.properties" ]]; then
+    sed -nE 's#.*gradle-([0-9.]+)-.*#\1#p' "$PROJECT_ROOT/gradle/wrapper/gradle-wrapper.properties" | head -n1
   fi
 }
 
 grep_build_version() {
   local pattern="$1"
-  rg --no-heading --glob '*.gradle' --glob '*.gradle.kts' -n "$pattern" "$ROOT_DIR" 2>/dev/null | head -n1 | sed 's/"/\\"/g' || true
+  rg --no-heading --glob '*.gradle' --glob '*.gradle.kts' -n "$pattern" "$PROJECT_ROOT" 2>/dev/null | head -n1 | sed 's/"/\\"/g' || true
 }
 
 write_metadata() {
@@ -254,8 +256,8 @@ if [[ -n "$JFR_ARGS" ]]; then
   JVM_TOOL_OPTS="${JVM_TOOL_OPTS:+$JVM_TOOL_OPTS }$JFR_ARGS"
 fi
 
-export META_REPO_NAME="$(basename "$ROOT_DIR")"
-export META_GIT_SHA="$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || true)"
+export META_REPO_NAME="$(basename "$PROJECT_ROOT")"
+export META_GIT_SHA="$(git -C "$PROJECT_ROOT" rev-parse HEAD 2>/dev/null || true)"
 export META_CAPTURED_AT="$(iso_now)"
 export META_OS="$(uname -s)"
 export META_KERNEL="$(uname -r)"
@@ -270,6 +272,7 @@ export META_JDK_VENDOR META_JDK_VERSION META_JDK_RUNTIME
 export META_FULL_COMMAND="$BUILD_CMD"
 export META_DEEP_MODE="$DEEP"
 export META_BUILD_STARTED_AT="$(iso_now)"
+export META_PROJECT_ROOT="$PROJECT_ROOT"
 write_metadata
 
 PIDS_WATCH_PID=""
@@ -317,7 +320,7 @@ STDOUT_CAPTURE_PID=$!
 timestamp_stream "$STDERR_LOG" <"$STDERR_PIPE" >&2 &
 STDERR_CAPTURE_PID=$!
 
-/bin/bash -lc "$BUILD_CMD" >"$STDOUT_PIPE" 2>"$STDERR_PIPE"
+(cd "$PROJECT_ROOT" && /bin/bash -lc "$BUILD_CMD") >"$STDOUT_PIPE" 2>"$STDERR_PIPE"
 BUILD_EXIT_CODE=$?
 
 wait "$STDOUT_CAPTURE_PID" "$STDERR_CAPTURE_PID" 2>/dev/null || true
