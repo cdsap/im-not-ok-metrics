@@ -56,6 +56,18 @@ ENABLE_JCMD_DYNAMIC_GC_LOGS=1
 
 The command exits with the same exit code as the build. Profiling failures are recorded in `warnings.log` and do not fail the run.
 
+## GitHub Actions usage
+
+This repository now includes a ready-to-use workflow at [`/Users/inakivillar/experiments/im-not-ok/.github/workflows/profile-build.yml`](/Users/inakivillar/experiments/im-not-ok/.github/workflows/profile-build.yml).
+
+If you vendor these harness files into an Android project repo, the workflow can run directly on `push`, `pull_request`, or `workflow_dispatch`. By default it executes:
+
+```bash
+./gradlew assembleDebug --stacktrace
+```
+
+You can override the Gradle command from the manual dispatch form with the `gradle_command` input and enable JFR with `deep_mode=true`.
+
 ## Artifact structure
 
 Each run writes to `artifacts/<timestamp>/`.

@@ -1,0 +1,49 @@
+name: Profile Android Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      gradle_command:
+        description: Gradle command to run through the profiling harness
+        required: false
+        default: ./gradlew assembleDebug --stacktrace
+      deep_mode:
+        description: Enable JFR collection in addition to GC logs and OS sampling
+        required: false
+        type: boolean
+        default: false
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  profile-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Make harness scripts executable
+        run: chmod +x scripts/*.sh scripts/*.py
+
+      - name: Run profiled Gradle build
+        env:
+          DEEP: ${{ inputs.deep_mode == true && '1' || '0' }}
+        run: scripts/run_build.sh "${{ inputs.gradle_command || './gradlew assembleDebug --stacktrace' }}"
+
+      - name: Upload profiling artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gradle-jvm-gc-artifacts
+          path: artifacts/

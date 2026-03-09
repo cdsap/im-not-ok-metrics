@@ -1,5 +1,7 @@
 # GitHub Actions Example
 
+If this harness is checked into the same repository as the Android project, you can use the built-in workflow at [`/Users/inakivillar/experiments/im-not-ok/.github/workflows/profile-build.yml`](/Users/inakivillar/experiments/im-not-ok/.github/workflows/profile-build.yml). The example below shows the equivalent inline job.
+
 ```yaml
 name: android-build-gc-harness
 
