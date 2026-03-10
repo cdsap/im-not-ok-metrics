@@ -124,10 +124,19 @@ def summarize_process_metrics(path: Path) -> tuple[dict[str, dict], list[dict]]:
     return per_pid, rows
 
 
-PAUSE_PATTERNS = [
-    re.compile(r"Pause[^\\n]*?([0-9]+(?:\\.[0-9]+)?)(ms|s)\\b"),
-    re.compile(r"Total time for which application threads were stopped: ([0-9]+(?:\\.[0-9]+)?) seconds"),
+GC_PAUSE_PATTERNS = [
+    re.compile(r"\bgc[^\]]*\]\s+GC\(\d+\)\s+Pause .*? ([0-9]+(?:\.[0-9]+)?)(ms|s)\b"),
+    re.compile(r"Total time for which application threads were stopped: ([0-9]+(?:\.[0-9]+)?) seconds"),
 ]
+SAFEPOINT_TOTAL_PATTERN = re.compile(r"\[info \]\[safepoint\s*\].* Total: ([0-9]+(?:\.[0-9]+)?)(ns|ms|s)\b")
+
+
+def duration_to_ms(value: float, unit: str) -> float:
+    if unit == "s":
+        return value * 1000.0
+    if unit == "ns":
+        return value / 1_000_000.0
+    return value
 
 
 def parse_gc_pauses(log_path: Path) -> list[float]:
@@ -135,14 +144,23 @@ def parse_gc_pauses(log_path: Path) -> list[float]:
     if not log_path.exists():
         return pauses_ms
     for line in log_path.read_text(errors="ignore").splitlines():
-        for pattern in PAUSE_PATTERNS:
+        matched_pause = False
+        for pattern in GC_PAUSE_PATTERNS:
             match = pattern.search(line)
             if not match:
                 continue
             value = float(match.group(1))
             unit = match.group(2) if len(match.groups()) > 1 else "s"
-            pauses_ms.append(value * 1000 if unit == "s" else value)
+            pauses_ms.append(duration_to_ms(value, unit))
+            matched_pause = True
             break
+        if matched_pause:
+            continue
+
+        # Fallback for logs where only safepoint totals are available.
+        match = SAFEPOINT_TOTAL_PATTERN.search(line)
+        if match:
+            pauses_ms.append(duration_to_ms(float(match.group(1)), match.group(2)))
     return pauses_ms
 
 
@@ -150,12 +168,19 @@ def summarize_gc(gc_dir: Path) -> dict[str, dict]:
     stats: dict[str, dict] = {}
     if not gc_dir.exists():
         return stats
+    pauses_by_pid: dict[str, list[float]] = defaultdict(list)
+    files_by_pid: dict[str, list[str]] = defaultdict(list)
+
     for path in sorted(gc_dir.glob("*.log")):
-        pauses = parse_gc_pauses(path)
         pid_match = re.search(r"([0-9]+)", path.name)
         pid = pid_match.group(1) if pid_match else path.stem
+        pauses_by_pid[pid].extend(parse_gc_pauses(path))
+        files_by_pid[pid].append(str(path))
+
+    for pid, pauses in pauses_by_pid.items():
         stats[pid] = {
-            "file": str(path),
+            "files": files_by_pid[pid],
+            "file": files_by_pid[pid][-1] if files_by_pid[pid] else None,
             "pause_count": len(pauses),
             "p50_ms": percentile(pauses, 0.50),
             "p95_ms": percentile(pauses, 0.95),

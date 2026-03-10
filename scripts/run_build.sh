@@ -89,7 +89,32 @@ extract_wrapper_gradle_version() {
 
 grep_build_version() {
   local pattern="$1"
-  rg --no-heading --glob '*.gradle' --glob '*.gradle.kts' -n "$pattern" "$PROJECT_ROOT" 2>/dev/null | head -n1 | sed 's/"/\\"/g' || true
+  rg --no-heading \
+    --glob '*.gradle' \
+    --glob '*.gradle.kts' \
+    --glob 'gradle.properties' \
+    --glob 'settings.gradle' \
+    --glob 'settings.gradle.kts' \
+    --glob 'libs.versions.toml' \
+    -n "$pattern" "$PROJECT_ROOT" 2>/dev/null | head -n1 | sed 's/"/\\"/g' || true
+}
+
+extract_version_value() {
+  local key="$1"
+  rg --no-heading --glob 'libs.versions.toml' -n "^[[:space:]]*$key[[:space:]]*=[[:space:]]*\"[^\"]+\"" "$PROJECT_ROOT" 2>/dev/null \
+    | sed -nE 's/.*"[[:space:]]*([^"]+)[[:space:]]*".*/\1/p' | head -n1 || true
+}
+
+extract_plugin_version() {
+  local plugin_id="$1"
+  rg --no-heading \
+    --glob '*.gradle' \
+    --glob '*.gradle.kts' \
+    --glob 'settings.gradle' \
+    --glob 'settings.gradle.kts' \
+    -n "id\([[:space:]]*\"$plugin_id\"[[:space:]]*\)[[:space:]]*version[[:space:]]*\"[^\"]+\"|id[[:space:]]+\"$plugin_id\"[[:space:]]+version[[:space:]]+\"[^\"]+\"" \
+    "$PROJECT_ROOT" 2>/dev/null \
+    | sed -nE 's/.*version[[:space:]]*"([^"]+)".*/\1/p' | head -n1 || true
 }
 
 write_metadata() {
@@ -259,8 +284,32 @@ export META_CPU_CORES="$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.n
 export META_TOTAL_MEM_KB="$(detect_total_mem_kb)"
 export META_CGROUP_LIMIT="$(detect_cgroup_limit)"
 export META_GRADLE_VERSION="$(extract_wrapper_gradle_version)"
-export META_AGP_VERSION="$(grep_build_version 'com\.android\.tools\.build:gradle|id\([[:space:]]*"com\.android\.[^"]+"' | head -n1)"
-export META_KOTLIN_VERSION="$(grep_build_version 'org\.jetbrains\.kotlin|kotlin\("android"\)|kotlin\("jvm"\)' | head -n1)"
+META_AGP_VERSION_VALUE="$(extract_plugin_version 'com.android.application')"
+if [[ -z "$META_AGP_VERSION_VALUE" ]]; then
+  META_AGP_VERSION_VALUE="$(extract_plugin_version 'com.android.library')"
+fi
+if [[ -z "$META_AGP_VERSION_VALUE" ]]; then
+  META_AGP_VERSION_VALUE="$(extract_version_value 'agp')"
+fi
+if [[ -z "$META_AGP_VERSION_VALUE" ]]; then
+  META_AGP_VERSION_VALUE="$(grep_build_version 'com\.android\.tools\.build:gradle:[0-9][^"[:space:]]*' | sed -nE 's#.*com\.android\.tools\.build:gradle:([^"[:space:]]+).*#\1#p' | head -n1)"
+fi
+export META_AGP_VERSION="${META_AGP_VERSION_VALUE:-}"
+
+META_KOTLIN_VERSION_VALUE="$(extract_plugin_version 'org.jetbrains.kotlin.android')"
+if [[ -z "$META_KOTLIN_VERSION_VALUE" ]]; then
+  META_KOTLIN_VERSION_VALUE="$(extract_plugin_version 'org.jetbrains.kotlin.jvm')"
+fi
+if [[ -z "$META_KOTLIN_VERSION_VALUE" ]]; then
+  META_KOTLIN_VERSION_VALUE="$(extract_plugin_version 'org.jetbrains.kotlin.plugin.compose')"
+fi
+if [[ -z "$META_KOTLIN_VERSION_VALUE" ]]; then
+  META_KOTLIN_VERSION_VALUE="$(extract_version_value 'kotlin')"
+fi
+if [[ -z "$META_KOTLIN_VERSION_VALUE" ]]; then
+  META_KOTLIN_VERSION_VALUE="$(grep_build_version 'org\.jetbrains\.kotlin:[^:"[:space:]]+:[0-9][^"[:space:]]*' | sed -nE 's#.*org\.jetbrains\.kotlin:[^:"[:space:]]+:([^"[:space:]]+).*#\1#p' | head -n1)"
+fi
+export META_KOTLIN_VERSION="${META_KOTLIN_VERSION_VALUE:-}"
 IFS='|' read -r META_JDK_VENDOR META_JDK_VERSION META_JDK_RUNTIME <<<"$(collect_java_metadata)"
 export META_JDK_VENDOR META_JDK_VERSION META_JDK_RUNTIME
 export META_FULL_COMMAND="$BUILD_CMD"
