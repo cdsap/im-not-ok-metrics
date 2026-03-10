@@ -244,16 +244,10 @@ if [[ -f "$GC_ARGS_TEMPLATE_FILE" ]]; then
   GC_ARGS="$(sed "s#{gc_log_path}#$GC_DIR/jvm-%p.gc.log#g" "$GC_ARGS_TEMPLATE_FILE")"
 fi
 JFR_ARGS=""
-if [[ "$DEEP" == "1" && -f "$JFR_ARGS_TEMPLATE_FILE" ]]; then
-  JFR_ARGS="$(sed "s#{jfr_path}#$JFR_DIR/jvm-%p.jfr#g" "$JFR_ARGS_TEMPLATE_FILE")"
-fi
 
 JVM_TOOL_OPTS="${JAVA_TOOL_OPTIONS:-}"
 if [[ -n "$GC_ARGS" ]]; then
   JVM_TOOL_OPTS="${JVM_TOOL_OPTS:+$JVM_TOOL_OPTS }$GC_ARGS"
-fi
-if [[ -n "$JFR_ARGS" ]]; then
-  JVM_TOOL_OPTS="${JVM_TOOL_OPTS:+$JVM_TOOL_OPTS }$JFR_ARGS"
 fi
 
 export META_REPO_NAME="$(basename "$PROJECT_ROOT")"
@@ -274,6 +268,10 @@ export META_DEEP_MODE="$DEEP"
 export META_BUILD_STARTED_AT="$(iso_now)"
 export META_PROJECT_ROOT="$PROJECT_ROOT"
 write_metadata
+
+if [[ "$DEEP" == "1" && ! -x "$(command -v jcmd 2>/dev/null)" ]]; then
+  warn "DEEP=1 requested but jcmd is not available; JFR collection will be skipped"
+fi
 
 PIDS_WATCH_PID=""
 METRICS_PID=""
