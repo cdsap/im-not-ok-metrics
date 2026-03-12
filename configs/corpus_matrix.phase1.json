@@ -1,0 +1,33 @@
+{
+  "description": "Phase 1 workload matrix for JDK 23 Android CI GC corpus collection",
+  "entries": [
+    {
+      "target_repository": "cdsap/simple-app-for-profile",
+      "project_slug": "simple-app-for-profile",
+      "configuration_slug": "clean-assemble-debug",
+      "run_kind": "clean",
+      "gradle_command": "./gradlew clean assembleDebug --stacktrace"
+    },
+    {
+      "target_repository": "cdsap/simple-app-for-profile",
+      "project_slug": "simple-app-for-profile",
+      "configuration_slug": "warm-assemble-debug",
+      "run_kind": "warm",
+      "gradle_command": "./gradlew assembleDebug --stacktrace"
+    },
+    {
+      "target_repository": "cdsap/simple-app-for-profile",
+      "project_slug": "simple-app-for-profile",
+      "configuration_slug": "lint-heavy",
+      "run_kind": "lint",
+      "gradle_command": "./gradlew lintDebug --stacktrace"
+    },
+    {
+      "target_repository": "cdsap/simple-app-for-profile",
+      "project_slug": "simple-app-for-profile",
+      "configuration_slug": "compile-heavy",
+      "run_kind": "compile",
+      "gradle_command": "./gradlew :app:compileDebugKotlin --stacktrace"
+    }
+  ]
+}

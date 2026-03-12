@@ -3,11 +3,16 @@ name: Collect Android GC Corpus
 on:
   workflow_dispatch:
     inputs:
+      matrix_file:
+        description: Matrix file under configs/, for example configs/corpus_matrix.phase1.json
+        required: false
+        default: configs/corpus_matrix.phase1.json
       target_repository:
-        description: owner/repo to profile
-        required: true
+        description: Optional owner/repo to profile directly instead of using matrix_file
+        required: false
+        default: ""
       target_ref:
-        description: git ref for target_repository
+        description: Optional git ref for target_repository
         required: false
         default: ""
       gradle_command:
@@ -15,9 +20,9 @@ on:
         required: false
         default: ./gradlew assembleDebug --stacktrace
       iterations_json:
-        description: JSON array of iteration ids
+        description: JSON array of iteration ids, for example [1,2,3,4,5,6,7,8,9,10]
         required: false
-        default: "[1,2,3]"
+        default: "[1,2,3,4,5,6,7,8,9,10]"
       project_slug:
         description: Stable dataset slug for this project
         required: false
@@ -37,13 +42,66 @@ on:
         default: true
 
 jobs:
+  plan-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - name: Check out harness repository
+        uses: actions/checkout@v4
+        with:
+          path: harness
+
+      - name: Make harness scripts executable
+        run: chmod +x harness/scripts/*.sh harness/scripts/*.py
+
+      - name: Plan execution matrix
+        id: plan
+        working-directory: ${{ github.workspace }}/harness
+        env:
+          INPUT_TARGET_REPOSITORY: ${{ inputs.target_repository }}
+          INPUT_TARGET_REF: ${{ inputs.target_ref }}
+          INPUT_PROJECT_SLUG: ${{ inputs.project_slug }}
+          INPUT_CONFIGURATION_SLUG: ${{ inputs.configuration_slug }}
+          INPUT_RUN_KIND: ${{ inputs.run_kind }}
+          INPUT_GRADLE_COMMAND: ${{ inputs.gradle_command }}
+          INPUT_ITERATIONS_JSON: ${{ inputs.iterations_json }}
+          INPUT_MATRIX_FILE: ${{ inputs.matrix_file }}
+        run: |
+          if [[ -n "$INPUT_TARGET_REPOSITORY" ]]; then
+            MATRIX_JSON="$(python3 - <<'PY'
+import json
+import os
+
+project_slug = os.environ["INPUT_PROJECT_SLUG"] or os.environ["INPUT_TARGET_REPOSITORY"]
+payload = {
+    "include": [
+        {
+            "target_repository": os.environ["INPUT_TARGET_REPOSITORY"],
+            "target_ref": os.environ["INPUT_TARGET_REF"],
+            "project_slug": project_slug,
+            "configuration_slug": os.environ["INPUT_CONFIGURATION_SLUG"],
+            "run_kind": os.environ["INPUT_RUN_KIND"],
+            "gradle_command": os.environ["INPUT_GRADLE_COMMAND"],
+            "iteration": 1,
+        }
+    ]
+}
+print(json.dumps(payload, sort_keys=True))
+PY
+)"
+          else
+            MATRIX_JSON="$(python3 scripts/render_corpus_matrix.py "$INPUT_MATRIX_FILE" "$INPUT_ITERATIONS_JSON")"
+          fi
+          echo "matrix=$MATRIX_JSON" >> "$GITHUB_OUTPUT"
+
   collect:
+    needs: plan-matrix
     runs-on: ubuntu-latest
     timeout-minutes: 120
     strategy:
       fail-fast: false
-      matrix:
-        iteration: ${{ fromJson(inputs.iterations_json) }}
+      matrix: ${{ fromJson(needs.plan-matrix.outputs.matrix) }}
 
     steps:
       - name: Check out harness repository
@@ -53,17 +111,17 @@ jobs:
 
       - name: Check out target project repository default branch
         uses: actions/checkout@v4
-        if: ${{ inputs.target_ref == '' }}
+        if: ${{ matrix.target_ref == '' }}
         with:
-          repository: ${{ inputs.target_repository }}
+          repository: ${{ matrix.target_repository }}
           path: project
 
       - name: Check out target project repository explicit ref
         uses: actions/checkout@v4
-        if: ${{ inputs.target_ref != '' }}
+        if: ${{ matrix.target_ref != '' }}
         with:
-          repository: ${{ inputs.target_repository }}
-          ref: ${{ inputs.target_ref }}
+          repository: ${{ matrix.target_repository }}
+          ref: ${{ matrix.target_ref }}
           path: project
 
       - name: Set up JDK 23
@@ -79,15 +137,15 @@ jobs:
         env:
           DEEP: ${{ inputs.deep_mode == true && '1' || '0' }}
           PROJECT_ROOT: ${{ github.workspace }}/project
-          PROJECT_SLUG: ${{ inputs.project_slug != '' && inputs.project_slug || github.event.inputs.target_repository }}
-          CONFIGURATION_SLUG: ${{ inputs.configuration_slug }}
-          RUN_KIND: ${{ inputs.run_kind }}
+          PROJECT_SLUG: ${{ matrix.project_slug }}
+          CONFIGURATION_SLUG: ${{ matrix.configuration_slug }}
+          RUN_KIND: ${{ matrix.run_kind }}
           ITERATION: ${{ matrix.iteration }}
           RUNNER_OS: ubuntu-latest
           RUNNER_VCPUS: "4"
           RUNNER_MEMORY_GB: "16"
         working-directory: ${{ github.workspace }}/harness
-        run: scripts/run_build.sh "${{ inputs.gradle_command }}"
+        run: scripts/run_build.sh "${{ matrix.gradle_command }}"
 
       - name: Build dataset index for this workspace
         if: always()
@@ -98,6 +156,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: corpus-${{ inputs.project_slug != '' && inputs.project_slug || 'project' }}-${{ inputs.configuration_slug }}-iter-${{ matrix.iteration }}
+          name: corpus-${{ matrix.project_slug }}-${{ matrix.configuration_slug }}-iter-${{ matrix.iteration }}
           path: |
             project/artifacts/
