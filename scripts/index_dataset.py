@@ -62,10 +62,12 @@ def normalize_entry(run_dir: Path) -> dict:
             entry["gradle_daemon_max_rss_kb"] = proc.get("max_rss_kb")
             entry["gradle_daemon_gc_p95_ms"] = proc.get("gc", {}).get("p95_ms")
             entry["gradle_daemon_gc_max_ms"] = proc.get("gc", {}).get("max_ms")
+            entry["observed_gc_gradle_daemon"] = proc.get("gc", {}).get("observed_gc_name")
         if role == "kotlin-daemon":
             entry["kotlin_daemon_max_rss_kb"] = proc.get("max_rss_kb")
             entry["kotlin_daemon_gc_p95_ms"] = proc.get("gc", {}).get("p95_ms")
             entry["kotlin_daemon_gc_max_ms"] = proc.get("gc", {}).get("max_ms")
+            entry["observed_gc_kotlin_daemon"] = proc.get("gc", {}).get("observed_gc_name")
     return entry
 
 

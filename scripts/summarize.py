@@ -129,6 +129,7 @@ GC_PAUSE_PATTERNS = [
     re.compile(r"Total time for which application threads were stopped: ([0-9]+(?:\.[0-9]+)?) seconds"),
 ]
 SAFEPOINT_TOTAL_PATTERN = re.compile(r"\[info \]\[safepoint\s*\].* Total: ([0-9]+(?:\.[0-9]+)?)(ns|ms|s)\b")
+GC_NAME_PATTERN = re.compile(r"\[info\s*\]\[gc(?:,init)?\s*\]\s+Using ([A-Za-z0-9 +_-]+)")
 
 
 def duration_to_ms(value: float, unit: str) -> float:
@@ -164,23 +165,38 @@ def parse_gc_pauses(log_path: Path) -> list[float]:
     return pauses_ms
 
 
+def parse_observed_gc_name(log_path: Path) -> str | None:
+    if not log_path.exists():
+        return None
+    for line in log_path.read_text(errors="ignore").splitlines():
+        match = GC_NAME_PATTERN.search(line)
+        if match:
+            return match.group(1).strip()
+    return None
+
+
 def summarize_gc(gc_dir: Path) -> dict[str, dict]:
     stats: dict[str, dict] = {}
     if not gc_dir.exists():
         return stats
     pauses_by_pid: dict[str, list[float]] = defaultdict(list)
     files_by_pid: dict[str, list[str]] = defaultdict(list)
+    observed_gc_by_pid: dict[str, str | None] = {}
 
     for path in sorted(gc_dir.glob("*.log")):
         pid_match = re.search(r"([0-9]+)", path.name)
         pid = pid_match.group(1) if pid_match else path.stem
         pauses_by_pid[pid].extend(parse_gc_pauses(path))
         files_by_pid[pid].append(str(path))
+        observed_name = parse_observed_gc_name(path)
+        if observed_name and not observed_gc_by_pid.get(pid):
+            observed_gc_by_pid[pid] = observed_name
 
     for pid, pauses in pauses_by_pid.items():
         stats[pid] = {
             "files": files_by_pid[pid],
             "file": files_by_pid[pid][-1] if files_by_pid[pid] else None,
+            "observed_gc_name": observed_gc_by_pid.get(pid),
             "pause_count": len(pauses),
             "p50_ms": percentile(pauses, 0.50),
             "p95_ms": percentile(pauses, 0.95),
@@ -310,12 +326,17 @@ def main() -> int:
         }
 
     correlations = []
+    observed_gc_profiles = {}
     for pid, proc in per_process.items():
+        role = proc.get("role")
+        observed_gc_name = proc.get("gc", {}).get("observed_gc_name")
+        if role and observed_gc_name and role not in observed_gc_profiles:
+            observed_gc_profiles[role] = observed_gc_name
         if proc.get("peak_task"):
             correlations.append(
                 {
                     "pid": pid,
-                    "role": proc.get("role"),
+                    "role": role,
                     "task": proc.get("peak_task"),
                     "peak_rss_kb": proc.get("max_rss_kb"),
                     "peak_rss_timestamp": proc.get("peak_rss_timestamp"),
@@ -327,6 +348,7 @@ def main() -> int:
         "build_duration_seconds": build_duration,
         "build_exit_code": metadata.get("build_exit_code"),
         "develocity_build_scan": metadata.get("develocity_build_scan"),
+        "observed_gc_profiles": observed_gc_profiles,
         "per_process": per_process,
         "correlated_peaks": correlations,
     }
@@ -353,6 +375,7 @@ def main() -> int:
                     f"max RSS {proc.get('max_rss_kb') or 'n/a'} kB, "
                     f"avg RSS {proc.get('avg_rss_kb') or 'n/a'} kB, "
                     f"max CPU {proc.get('max_cpu_pct') or 'n/a'}%, "
+                    f"observed GC {gc.get('observed_gc_name') or 'n/a'}, "
                     f"GC p95 {gc.get('p95_ms') or 'n/a'} ms, "
                     f"GC max {gc.get('max_ms') or 'n/a'} ms, "
                     f"total GC {gc.get('total_gc_time_ms') or 0.0} ms"
