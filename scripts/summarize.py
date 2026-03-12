@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import json
 import math
+import os
 import re
 import statistics
 import subprocess
@@ -15,6 +16,8 @@ from pathlib import Path
 
 
 ISO_FORMATS = ("%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%dT%H:%M:%S.%fZ")
+JFR_PARSE_TIMEOUT_SECONDS = int(os.environ.get("JFR_PARSE_TIMEOUT_SECONDS", "90"))
+JFR_MAX_PARSE_BYTES = int(os.environ.get("JFR_MAX_PARSE_BYTES", str(96 * 1024 * 1024)))
 
 
 def parse_ts(value: str | None) -> datetime | None:
@@ -234,6 +237,8 @@ def normalize_jfr_class_name(raw_name: str | None) -> str | None:
 def parse_jfr_allocation_file(jfr_path: Path) -> dict | None:
     if not jfr_path.exists() or jfr_path.stat().st_size == 0:
         return None
+    if jfr_path.stat().st_size > JFR_MAX_PARSE_BYTES:
+        return None
 
     try:
         proc = subprocess.run(
@@ -248,8 +253,11 @@ def parse_jfr_allocation_file(jfr_path: Path) -> dict | None:
             capture_output=True,
             text=True,
             check=False,
+            timeout=JFR_PARSE_TIMEOUT_SECONDS,
         )
     except FileNotFoundError:
+        return None
+    except subprocess.TimeoutExpired:
         return None
 
     if proc.returncode != 0 or not proc.stdout.strip():
@@ -334,7 +342,10 @@ def summarize_jfr(jfr_dir: Path, build_duration_seconds: float | None) -> dict[s
             best_by_pid[pid] = (path, size)
 
     for pid, (path, _) in best_by_pid.items():
-        parsed = parse_jfr_allocation_file(path)
+        try:
+            parsed = parse_jfr_allocation_file(path)
+        except Exception:
+            parsed = None
         if not parsed:
             continue
         if build_duration_seconds and build_duration_seconds > 0:
