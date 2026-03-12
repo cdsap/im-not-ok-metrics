@@ -7,6 +7,7 @@ import json
 import math
 import re
 import statistics
+import subprocess
 import sys
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -207,6 +208,137 @@ def summarize_gc(gc_dir: Path) -> dict[str, dict]:
     return stats
 
 
+def safe_get_nested(mapping: dict, path: list[str]) -> str | int | float | None:
+    current = mapping
+    for key in path:
+        if not isinstance(current, dict):
+            return None
+        current = current.get(key)
+        if current is None:
+            return None
+    return current
+
+
+def normalize_jfr_class_name(raw_name: str | None) -> str | None:
+    if not raw_name:
+        return None
+    return raw_name.replace("/", ".")
+
+
+def parse_jfr_allocation_file(jfr_path: Path) -> dict | None:
+    if not jfr_path.exists() or jfr_path.stat().st_size == 0:
+        return None
+
+    try:
+        proc = subprocess.run(
+            [
+                "jfr",
+                "print",
+                "--json",
+                "--events",
+                "jdk.ObjectAllocationSample,jdk.ObjectAllocationInNewTLAB,jdk.ObjectAllocationOutsideTLAB",
+                str(jfr_path),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError:
+        return None
+
+    if proc.returncode != 0 or not proc.stdout.strip():
+        return None
+
+    try:
+        payload = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return None
+
+    events = payload.get("recording", {}).get("events", [])
+    if not events:
+        return None
+
+    total_bytes = 0
+    top_threads: dict[str, int] = defaultdict(int)
+    top_classes: dict[str, int] = defaultdict(int)
+    event_counts: dict[str, int] = defaultdict(int)
+    mode = None
+
+    for event in events:
+        event_type = event.get("type")
+        values = event.get("values", {})
+        byte_count = safe_get_nested(values, ["allocationSize"])
+        if byte_count is None:
+            byte_count = safe_get_nested(values, ["weight"])
+        if byte_count is None:
+            continue
+        try:
+            byte_count_int = int(byte_count)
+        except (TypeError, ValueError):
+            continue
+
+        total_bytes += byte_count_int
+        event_counts[str(event_type)] += 1
+
+        if event_type == "jdk.ObjectAllocationSample":
+            mode = mode or "sampled"
+        else:
+            mode = "exact"
+
+        thread_name = safe_get_nested(values, ["eventThread", "javaName"]) or safe_get_nested(values, ["eventThread", "osName"])
+        class_name = normalize_jfr_class_name(safe_get_nested(values, ["objectClass", "name"]))
+        if thread_name:
+            top_threads[str(thread_name)] += byte_count_int
+        if class_name:
+            top_classes[str(class_name)] += byte_count_int
+
+    if total_bytes == 0:
+        return None
+
+    def top_items(source: dict[str, int]) -> list[dict]:
+        return [
+            {"name": name, "bytes": value}
+            for name, value in sorted(source.items(), key=lambda item: item[1], reverse=True)[:5]
+        ]
+
+    return {
+        "file": str(jfr_path),
+        "mode": mode or "unknown",
+        "total_allocation_bytes": total_bytes,
+        "event_counts": dict(event_counts),
+        "top_threads": top_items(top_threads),
+        "top_classes": top_items(top_classes),
+    }
+
+
+def summarize_jfr(jfr_dir: Path, build_duration_seconds: float | None) -> dict[str, dict]:
+    stats: dict[str, dict] = {}
+    if not jfr_dir.exists():
+        return stats
+
+    best_by_pid: dict[str, tuple[Path, int]] = {}
+    for path in sorted(jfr_dir.glob("*.jfr")):
+        pid_match = re.search(r"([0-9]+)", path.name)
+        if not pid_match:
+            continue
+        pid = pid_match.group(1)
+        size = path.stat().st_size if path.exists() else 0
+        current = best_by_pid.get(pid)
+        if current is None or size > current[1]:
+            best_by_pid[pid] = (path, size)
+
+    for pid, (path, _) in best_by_pid.items():
+        parsed = parse_jfr_allocation_file(path)
+        if not parsed:
+            continue
+        if build_duration_seconds and build_duration_seconds > 0:
+            parsed["allocation_rate_mb_per_s"] = parsed["total_allocation_bytes"] / (1024 * 1024) / build_duration_seconds
+        else:
+            parsed["allocation_rate_mb_per_s"] = None
+        stats[pid] = parsed
+    return stats
+
+
 TASK_PATTERN = re.compile(
     r"^(?P<ts>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s+(?P<line>> Task (?P<task>:[^\s]+)(?:\s+(?P<outcome>[A-Z-]+))?.*)$"
 )
@@ -295,6 +427,7 @@ def main() -> int:
     build_duration = None
     if build_started and build_finished:
         build_duration = (build_finished - build_started).total_seconds()
+    jfr_summary = summarize_jfr(artifact_dir / "logs" / "jfr", build_duration)
 
     tasks, scan_url = parse_task_timeline(artifact_dir / "logs" / "gradle_stdout.log", build_finished)
     write_task_csv(artifact_dir / "gradle" / "task_timeline.csv", tasks)
@@ -314,6 +447,7 @@ def main() -> int:
             "max_cpu_pct": proc_stats.get("max_cpu_pct"),
             "peak_rss_timestamp": proc_stats.get("peak_rss_timestamp"),
             "peak_task": peak_task,
+            "jfr": jfr_summary.get(pid),
             "gc": gc_stats or {
                 "file": None,
                 "pause_count": 0,
@@ -369,6 +503,7 @@ def main() -> int:
     if per_process:
         for pid, proc in sorted(per_process.items(), key=lambda item: ((item[1].get("role") or ""), item[0])):
             gc = proc["gc"]
+            jfr = proc.get("jfr") or {}
             lines.append(
                 (
                     f"- {role_display(pid, pid_roles, process_summary)}: "
@@ -376,6 +511,8 @@ def main() -> int:
                     f"avg RSS {proc.get('avg_rss_kb') or 'n/a'} kB, "
                     f"max CPU {proc.get('max_cpu_pct') or 'n/a'}%, "
                     f"observed GC {gc.get('observed_gc_name') or 'n/a'}, "
+                    f"alloc mode {jfr.get('mode') or 'n/a'}, "
+                    f"alloc rate {jfr.get('allocation_rate_mb_per_s') or 'n/a'} MB/s, "
                     f"GC p95 {gc.get('p95_ms') or 'n/a'} ms, "
                     f"GC max {gc.get('max_ms') or 'n/a'} ms, "
                     f"total GC {gc.get('total_gc_time_ms') or 0.0} ms"

@@ -12,6 +12,14 @@ The harness produces raw per-run outputs under `artifacts/<run_id>/`. For corpus
 - `logs/`
 - `gradle/`
 
+`summary.json` and `summary.md` now include best-effort JFR allocation summaries for JVMs where non-empty `.jfr` recordings are available. The current rollups are intentionally basic:
+
+- allocation mode (`sampled` or `exact`)
+- total observed allocation bytes
+- allocation rate in MB/s
+- top allocating threads
+- top allocated classes
+
 ## Why two extra metadata files
 
 - `project_profile.json` describes the workload family: module count, Kotlin/Java source volume, and whether the project uses KSP, KAPT, or Compose.

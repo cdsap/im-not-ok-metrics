@@ -19,6 +19,7 @@ WARNINGS_FILE="$ARTIFACT_DIR/warnings.log"
 METADATA_FILE="$ARTIFACT_DIR/metadata.json"
 PROJECT_PROFILE_FILE="$ARTIFACT_DIR/project_profile.json"
 RUN_PROFILE_FILE="$ARTIFACT_DIR/run_profile.json"
+JFR_RECORDINGS_FILE="$ARTIFACT_DIR/.jfr_recordings.csv"
 DISCOVERED_PIDS_FILE="$OS_DIR/discovered_pids.csv"
 PROCESS_METRICS_FILE="$OS_DIR/process_metrics.csv"
 SYSTEM_METRICS_FILE="$OS_DIR/system_metrics.csv"
@@ -42,6 +43,7 @@ mkdir -p "$GC_DIR" "$JFR_DIR" "$OS_DIR" "$GRADLE_DIR"
 : >"$WARNINGS_FILE"
 : >"$STDOUT_LOG"
 : >"$STDERR_LOG"
+: >"$JFR_RECORDINGS_FILE"
 
 if [[ -f "$SAMPLING_CONFIG_FILE" ]]; then
   # shellcheck disable=SC1090
@@ -223,10 +225,12 @@ enable_dynamic_gc_logging() {
 enable_jfr_attach() {
   local pid="$1"
   local jfr_path="$JFR_DIR/jvm-$pid.jfr"
+  local recording_name="ci-harness-$pid"
   [[ "$DEEP" == "1" ]] || return 0
   command -v jcmd >/dev/null 2>&1 || return 1
   [[ -f "$jfr_path" ]] && return 0
-  jcmd "$pid" JFR.start "name=ci-harness-$pid" settings=profile "filename=$jfr_path" dumponexit=true >/dev/null 2>&1 || return 1
+  jcmd "$pid" JFR.start "name=$recording_name" settings=profile "filename=$jfr_path" dumponexit=true >/dev/null 2>&1 || return 1
+  grep -q "^$pid," "$JFR_RECORDINGS_FILE" 2>/dev/null || printf '%s,%s,%s\n' "$pid" "$recording_name" "$jfr_path" >>"$JFR_RECORDINGS_FILE"
 }
 
 attach_loop() {
@@ -295,6 +299,20 @@ def materialize(kind_dir: Path, suffix: str):
 materialize(gc_dir, "-gc.log")
 materialize(jfr_dir, ".jfr")
 PY
+}
+
+flush_jfr_recordings() {
+  [[ "$DEEP" == "1" ]] || return 0
+  command -v jcmd >/dev/null 2>&1 || return 0
+  [[ -f "$JFR_RECORDINGS_FILE" ]] || return 0
+
+  while IFS=, read -r pid recording_name jfr_path; do
+    [[ -n "${pid:-}" && -n "${recording_name:-}" && -n "${jfr_path:-}" ]] || continue
+    kill -0 "$pid" 2>/dev/null || continue
+    jcmd "$pid" JFR.stop "name=$recording_name" "filename=$jfr_path" >/dev/null 2>&1 \
+      || jcmd "$pid" JFR.dump "name=$recording_name" "filename=$jfr_path" >/dev/null 2>&1 \
+      || warn "Could not flush JFR recording for pid $pid"
+  done <"$JFR_RECORDINGS_FILE"
 }
 
 GC_ARGS=""
@@ -425,6 +443,7 @@ export META_BUILD_FINISHED_AT="$(iso_now)"
 update_metadata_after_build "$META_BUILD_FINISHED_AT" "$BUILD_EXIT_CODE"
 
 sleep 1
+flush_jfr_recordings
 cleanup
 finalize_gc_files || warn "Could not materialize role-named GC/JFR artifacts"
 "$SCRIPT_DIR/summarize.sh" "$ARTIFACT_DIR" || warn "Summarization failed"
