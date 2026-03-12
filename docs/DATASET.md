@@ -1,0 +1,50 @@
+# Dataset Layout
+
+The harness produces raw per-run outputs under `artifacts/<run_id>/`. For corpus collection, treat each run directory as immutable and index it rather than rewriting it.
+
+## Per-run files
+
+- `metadata.json`
+- `project_profile.json`
+- `run_profile.json`
+- `summary.json`
+- `summary.md`
+- `logs/`
+- `gradle/`
+
+## Why two extra metadata files
+
+- `project_profile.json` describes the workload family: module count, Kotlin/Java source volume, and whether the project uses KSP, KAPT, or Compose.
+- `run_profile.json` describes the specific run shape: project slug, configuration slug, run kind, iteration number, runner shape, and build command.
+
+This separation lets you ask both kinds of questions:
+
+- "How do Kotlin-heavy projects behave on JDK 23?"
+- "How do clean `assembleDebug` runs behave on ephemeral 4 vCPU runners?"
+
+## Recommended storage model
+
+For long-term analysis, store uploaded runs grouped by project and configuration:
+
+```text
+datasets/
+  <project_slug>/
+    <configuration_slug>/
+      <run_id>/
+```
+
+The raw harness output does not need to change for this. You can reconstruct that layout from the three key identifiers already written into each run:
+
+- `project_slug`
+- `configuration_slug`
+- `run_id`
+
+## Dataset index
+
+Use:
+
+```bash
+scripts/index_dataset.sh artifacts
+```
+
+This writes `artifacts/dataset_index.jsonl`, one JSON object per run, to make later analysis and clustering easier.

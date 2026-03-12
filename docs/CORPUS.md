@@ -1,0 +1,64 @@
+# Corpus Collection
+
+The repository now has two GitHub Actions entry points:
+
+- `.github/workflows/profile-build.yml`
+- `.github/workflows/collect-corpus.yml`
+
+## Intent
+
+- `profile-build.yml` is the single-run path for validating a project or debugging one workload shape.
+- `collect-corpus.yml` is the dataset path for repeated executions across the same project configuration.
+
+This follows the useful part of Telltale's model: treat execution as parameterized orchestration, not as a one-off shell command.
+
+## Recommended usage
+
+### Single run
+
+Use `profile-build.yml` when you want one artifact set for a project and build target.
+
+Important inputs:
+
+- `target_repository`
+- `target_ref`
+- `gradle_command`
+- `configuration_slug`
+- `run_kind`
+- `deep_mode`
+
+### Corpus run
+
+Use `collect-corpus.yml` when you want repeated runs for the same workload shape.
+
+Important inputs:
+
+- `target_repository`
+- `target_ref`
+- `gradle_command`
+- `project_slug`
+- `configuration_slug`
+- `run_kind`
+- `iterations_json`
+- `deep_mode`
+
+Example:
+
+```json
+[1,2,3,4,5,6,7,8,9,10]
+```
+
+This creates ten repeated runs of the same build shape, each with the same project/configuration labels and a different `iteration` value in `run_profile.json`.
+
+## Why this matters for "I'm not Ok"
+
+The goal is not just to gather logs. The goal is to build a workload corpus for JDK 23 collector design.
+
+That means every run should be labeled with:
+
+- which project it came from
+- which build shape it represents
+- whether it was clean, warm, incremental, lint-heavy, or test-heavy
+- which iteration it is inside a repeated series
+
+Without those labels, later GC analysis becomes anecdotal instead of systematic.

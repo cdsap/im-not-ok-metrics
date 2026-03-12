@@ -17,6 +17,8 @@ OS_DIR="$LOG_DIR/os"
 GRADLE_DIR="$ARTIFACT_DIR/gradle"
 WARNINGS_FILE="$ARTIFACT_DIR/warnings.log"
 METADATA_FILE="$ARTIFACT_DIR/metadata.json"
+PROJECT_PROFILE_FILE="$ARTIFACT_DIR/project_profile.json"
+RUN_PROFILE_FILE="$ARTIFACT_DIR/run_profile.json"
 DISCOVERED_PIDS_FILE="$OS_DIR/discovered_pids.csv"
 PROCESS_METRICS_FILE="$OS_DIR/process_metrics.csv"
 SYSTEM_METRICS_FILE="$OS_DIR/system_metrics.csv"
@@ -28,6 +30,13 @@ SAMPLING_CONFIG_FILE="$HARNESS_ROOT_DIR/configs/sampling_config.env"
 DEEP="${DEEP:-0}"
 ENABLE_JCMD_ATTACH="${ENABLE_JCMD_ATTACH:-1}"
 ENABLE_JCMD_DYNAMIC_GC_LOGS="${ENABLE_JCMD_DYNAMIC_GC_LOGS:-1}"
+RUN_KIND="${RUN_KIND:-ad-hoc}"
+PROJECT_SLUG="${PROJECT_SLUG:-$(basename "$PROJECT_ROOT")}"
+CONFIGURATION_SLUG="${CONFIGURATION_SLUG:-default}"
+ITERATION="${ITERATION:-1}"
+RUNNER_OS="${RUNNER_OS:-$(uname -s)}"
+RUNNER_VCPUS="${RUNNER_VCPUS:-}"
+RUNNER_MEMORY_GB="${RUNNER_MEMORY_GB:-}"
 
 mkdir -p "$GC_DIR" "$JFR_DIR" "$OS_DIR" "$GRADLE_DIR"
 : >"$WARNINGS_FILE"
@@ -161,6 +170,30 @@ with open(path, encoding="utf-8") as fh:
     data = json.load(fh)
 data["build_finished_at"] = finished_at
 data["build_exit_code"] = int(exit_code)
+with open(path, "w", encoding="utf-8") as fh:
+    json.dump(data, fh, indent=2, sort_keys=True)
+    fh.write("\n")
+PY
+}
+
+write_run_profile() {
+  python3 - "$RUN_PROFILE_FILE" <<'PY'
+import json
+import os
+import sys
+
+path = sys.argv[1]
+data = {
+    "project_slug": os.environ.get("RUN_PROFILE_PROJECT_SLUG"),
+    "configuration_slug": os.environ.get("RUN_PROFILE_CONFIGURATION_SLUG"),
+    "run_kind": os.environ.get("RUN_PROFILE_RUN_KIND"),
+    "iteration": int(os.environ["RUN_PROFILE_ITERATION"]) if os.environ.get("RUN_PROFILE_ITERATION") else None,
+    "runner_os": os.environ.get("RUN_PROFILE_RUNNER_OS"),
+    "runner_vcpus": int(os.environ["RUN_PROFILE_RUNNER_VCPUS"]) if os.environ.get("RUN_PROFILE_RUNNER_VCPUS") else None,
+    "runner_memory_gb": float(os.environ["RUN_PROFILE_RUNNER_MEMORY_GB"]) if os.environ.get("RUN_PROFILE_RUNNER_MEMORY_GB") else None,
+    "full_command": os.environ.get("RUN_PROFILE_FULL_COMMAND"),
+    "deep_mode": os.environ.get("RUN_PROFILE_DEEP_MODE") == "1",
+}
 with open(path, "w", encoding="utf-8") as fh:
     json.dump(data, fh, indent=2, sort_keys=True)
     fh.write("\n")
@@ -317,6 +350,21 @@ export META_DEEP_MODE="$DEEP"
 export META_BUILD_STARTED_AT="$(iso_now)"
 export META_PROJECT_ROOT="$PROJECT_ROOT"
 write_metadata
+
+export RUN_PROFILE_PROJECT_SLUG="$PROJECT_SLUG"
+export RUN_PROFILE_CONFIGURATION_SLUG="$CONFIGURATION_SLUG"
+export RUN_PROFILE_RUN_KIND="$RUN_KIND"
+export RUN_PROFILE_ITERATION="$ITERATION"
+export RUN_PROFILE_RUNNER_OS="$RUNNER_OS"
+export RUN_PROFILE_RUNNER_VCPUS="$RUNNER_VCPUS"
+export RUN_PROFILE_RUNNER_MEMORY_GB="$RUNNER_MEMORY_GB"
+export RUN_PROFILE_FULL_COMMAND="$BUILD_CMD"
+export RUN_PROFILE_DEEP_MODE="$DEEP"
+write_run_profile
+
+if [[ -x "$SCRIPT_DIR/project_profile.py" ]]; then
+  python3 "$SCRIPT_DIR/project_profile.py" "$PROJECT_ROOT" "$PROJECT_PROFILE_FILE" || warn "Project profiling failed"
+fi
 
 if [[ "$DEEP" == "1" && ! -x "$(command -v jcmd 2>/dev/null)" ]]; then
   warn "DEEP=1 requested but jcmd is not available; JFR collection will be skipped"

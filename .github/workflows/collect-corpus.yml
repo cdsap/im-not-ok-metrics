@@ -1,20 +1,27 @@
-name: Profile Android Build
+name: Collect Android GC Corpus
 
 on:
   workflow_dispatch:
     inputs:
       target_repository:
-        description: Optional owner/repo to profile instead of the repository containing this workflow
-        required: false
-        default: ""
+        description: owner/repo to profile
+        required: true
       target_ref:
-        description: Optional git ref for target_repository
+        description: git ref for target_repository
         required: false
         default: ""
       gradle_command:
-        description: Gradle command to run through the profiling harness
+        description: Gradle command to execute
         required: false
         default: ./gradlew assembleDebug --stacktrace
+      iterations_json:
+        description: JSON array of iteration ids
+        required: false
+        default: "[1,2,3]"
+      project_slug:
+        description: Stable dataset slug for this project
+        required: false
+        default: ""
       configuration_slug:
         description: Stable dataset slug for this workload shape
         required: false
@@ -24,20 +31,19 @@ on:
         required: false
         default: clean
       deep_mode:
-        description: Enable JFR collection in addition to GC logs and OS sampling
+        description: Enable JFR collection
         required: false
         type: boolean
-        default: false
-  pull_request:
-  push:
-    branches:
-      - main
-      - master
+        default: true
 
 jobs:
-  profile-build:
+  collect:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        iteration: ${{ fromJson(inputs.iterations_json) }}
 
     steps:
       - name: Check out harness repository
@@ -45,22 +51,16 @@ jobs:
         with:
           path: harness
 
-      - name: Check out target project repository from current repo
-        uses: actions/checkout@v4
-        if: ${{ inputs.target_repository == '' }}
-        with:
-          path: project
-
       - name: Check out target project repository default branch
         uses: actions/checkout@v4
-        if: ${{ inputs.target_repository != '' && inputs.target_ref == '' }}
+        if: ${{ inputs.target_ref == '' }}
         with:
           repository: ${{ inputs.target_repository }}
           path: project
 
       - name: Check out target project repository explicit ref
         uses: actions/checkout@v4
-        if: ${{ inputs.target_repository != '' && inputs.target_ref != '' }}
+        if: ${{ inputs.target_ref != '' }}
         with:
           repository: ${{ inputs.target_repository }}
           ref: ${{ inputs.target_ref }}
@@ -75,23 +75,29 @@ jobs:
       - name: Make harness scripts executable
         run: chmod +x harness/scripts/*.sh harness/scripts/*.py
 
-      - name: Run profiled Gradle build
+      - name: Run profiled corpus collection
         env:
           DEEP: ${{ inputs.deep_mode == true && '1' || '0' }}
           PROJECT_ROOT: ${{ github.workspace }}/project
-          PROJECT_SLUG: ${{ inputs.target_repository != '' && inputs.target_repository || github.repository }}
-          CONFIGURATION_SLUG: ${{ inputs.configuration_slug || 'assemble-debug' }}
-          RUN_KIND: ${{ inputs.run_kind || 'clean' }}
-          ITERATION: "1"
+          PROJECT_SLUG: ${{ inputs.project_slug != '' && inputs.project_slug || github.event.inputs.target_repository }}
+          CONFIGURATION_SLUG: ${{ inputs.configuration_slug }}
+          RUN_KIND: ${{ inputs.run_kind }}
+          ITERATION: ${{ matrix.iteration }}
           RUNNER_OS: ubuntu-latest
           RUNNER_VCPUS: "4"
           RUNNER_MEMORY_GB: "16"
         working-directory: ${{ github.workspace }}/harness
-        run: scripts/run_build.sh "${{ inputs.gradle_command || './gradlew assembleDebug --stacktrace' }}"
+        run: scripts/run_build.sh "${{ inputs.gradle_command }}"
 
-      - name: Upload profiling artifacts
+      - name: Build dataset index for this workspace
+        if: always()
+        working-directory: ${{ github.workspace }}/harness
+        run: scripts/index_dataset.sh "${{ github.workspace }}/project/artifacts"
+
+      - name: Upload corpus artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: gradle-jvm-gc-artifacts
-          path: project/artifacts/
+          name: corpus-${{ inputs.project_slug != '' && inputs.project_slug || 'project' }}-${{ inputs.configuration_slug }}-iter-${{ matrix.iteration }}
+          path: |
+            project/artifacts/
