@@ -69,7 +69,7 @@ jobs:
           INPUT_MATRIX_FILE: ${{ inputs.matrix_file }}
         run: |
           if [[ -n "$INPUT_TARGET_REPOSITORY" ]]; then
-            MATRIX_JSON="$(python3 -c 'import json, os, re; project_slug = os.environ["INPUT_PROJECT_SLUG"] or os.environ["INPUT_TARGET_REPOSITORY"]; artifact_slug = re.sub(r"[^A-Za-z0-9._-]+", "-", project_slug).strip("-") or "project"; payload = {"include": [{"target_repository": os.environ["INPUT_TARGET_REPOSITORY"], "target_ref": os.environ["INPUT_TARGET_REF"], "project_slug": project_slug, "artifact_slug": artifact_slug, "configuration_slug": os.environ["INPUT_CONFIGURATION_SLUG"], "run_kind": os.environ["INPUT_RUN_KIND"], "gradle_command": os.environ["INPUT_GRADLE_COMMAND"], "iteration": 1}]}; print(json.dumps(payload, sort_keys=True))')"
+            MATRIX_JSON="$(python3 -c 'import json, os, re; project_slug = os.environ["INPUT_PROJECT_SLUG"] or os.environ["INPUT_TARGET_REPOSITORY"]; artifact_slug = re.sub(r"[^A-Za-z0-9._-]+", "-", project_slug).strip("-") or "project"; iterations = json.loads(os.environ["INPUT_ITERATIONS_JSON"]); payload = {"include": [{"target_repository": os.environ["INPUT_TARGET_REPOSITORY"], "target_ref": os.environ["INPUT_TARGET_REF"], "project_slug": project_slug, "artifact_slug": artifact_slug, "configuration_slug": os.environ["INPUT_CONFIGURATION_SLUG"], "run_kind": os.environ["INPUT_RUN_KIND"], "gradle_command": os.environ["INPUT_GRADLE_COMMAND"], "iteration": iteration} for iteration in iterations]}; print(json.dumps(payload, sort_keys=True))')"
           else
             MATRIX_JSON="$(python3 scripts/render_corpus_matrix.py "$INPUT_MATRIX_FILE" "$INPUT_ITERATIONS_JSON")"
           fi
