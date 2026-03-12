@@ -38,6 +38,9 @@ ITERATION="${ITERATION:-1}"
 RUNNER_OS="${RUNNER_OS:-$(uname -s)}"
 RUNNER_VCPUS="${RUNNER_VCPUS:-}"
 RUNNER_MEMORY_GB="${RUNNER_MEMORY_GB:-}"
+GRADLE_GC_PROFILE="${GRADLE_GC_PROFILE:-}"
+KOTLIN_GC_PROFILE="${KOTLIN_GC_PROFILE:-}"
+TEST_JVM_GC_PROFILE="${TEST_JVM_GC_PROFILE:-}"
 
 mkdir -p "$GC_DIR" "$JFR_DIR" "$OS_DIR" "$GRADLE_DIR"
 : >"$WARNINGS_FILE"
@@ -195,6 +198,11 @@ data = {
     "runner_memory_gb": float(os.environ["RUN_PROFILE_RUNNER_MEMORY_GB"]) if os.environ.get("RUN_PROFILE_RUNNER_MEMORY_GB") else None,
     "full_command": os.environ.get("RUN_PROFILE_FULL_COMMAND"),
     "deep_mode": os.environ.get("RUN_PROFILE_DEEP_MODE") == "1",
+    "declared_gc_profiles": {
+        "gradle-daemon": os.environ.get("RUN_PROFILE_GRADLE_GC_PROFILE") or None,
+        "kotlin-daemon": os.environ.get("RUN_PROFILE_KOTLIN_GC_PROFILE") or None,
+        "test-jvm": os.environ.get("RUN_PROFILE_TEST_JVM_GC_PROFILE") or None,
+    },
 }
 with open(path, "w", encoding="utf-8") as fh:
     json.dump(data, fh, indent=2, sort_keys=True)
@@ -378,6 +386,9 @@ export RUN_PROFILE_RUNNER_VCPUS="$RUNNER_VCPUS"
 export RUN_PROFILE_RUNNER_MEMORY_GB="$RUNNER_MEMORY_GB"
 export RUN_PROFILE_FULL_COMMAND="$BUILD_CMD"
 export RUN_PROFILE_DEEP_MODE="$DEEP"
+export RUN_PROFILE_GRADLE_GC_PROFILE="$GRADLE_GC_PROFILE"
+export RUN_PROFILE_KOTLIN_GC_PROFILE="$KOTLIN_GC_PROFILE"
+export RUN_PROFILE_TEST_JVM_GC_PROFILE="$TEST_JVM_GC_PROFILE"
 write_run_profile
 
 if [[ -x "$SCRIPT_DIR/project_profile.py" ]]; then

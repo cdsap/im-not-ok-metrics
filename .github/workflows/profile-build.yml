@@ -23,6 +23,18 @@ on:
         description: clean, warm, incremental, lint, test, or custom
         required: false
         default: clean
+      gradle_gc_profile:
+        description: Declared GC profile for the Gradle daemon, for example jdk23-g1-default or jdk23-im-not-ok
+        required: false
+        default: ""
+      kotlin_gc_profile:
+        description: Declared GC profile for Kotlin daemon JVMs
+        required: false
+        default: ""
+      test_jvm_gc_profile:
+        description: Declared GC profile for forked test JVMs
+        required: false
+        default: ""
       deep_mode:
         description: Enable JFR collection in addition to GC logs and OS sampling
         required: false
@@ -86,6 +98,9 @@ jobs:
           RUNNER_OS: ubuntu-latest
           RUNNER_VCPUS: "4"
           RUNNER_MEMORY_GB: "16"
+          GRADLE_GC_PROFILE: ${{ inputs.gradle_gc_profile }}
+          KOTLIN_GC_PROFILE: ${{ inputs.kotlin_gc_profile }}
+          TEST_JVM_GC_PROFILE: ${{ inputs.test_jvm_gc_profile }}
         working-directory: ${{ github.workspace }}/harness
         run: scripts/run_build.sh "${{ inputs.gradle_command || './gradlew assembleDebug --stacktrace' }}"
 

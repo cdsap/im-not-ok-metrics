@@ -25,6 +25,9 @@ Important inputs:
 - `gradle_command`
 - `configuration_slug`
 - `run_kind`
+- `gradle_gc_profile`
+- `kotlin_gc_profile`
+- `test_jvm_gc_profile`
 - `deep_mode`
 
 ### Corpus run
@@ -40,6 +43,9 @@ Important inputs:
 - `configuration_slug`
 - `run_kind`
 - `iterations_json`
+- `gradle_gc_profile`
+- `kotlin_gc_profile`
+- `test_jvm_gc_profile`
 - `deep_mode`
 
 Example:
@@ -60,5 +66,6 @@ That means every run should be labeled with:
 - which build shape it represents
 - whether it was clean, warm, incremental, lint-heavy, or test-heavy
 - which iteration it is inside a repeated series
+- which collector family we intended each JVM role to use
 
 Without those labels, later GC analysis becomes anecdotal instead of systematic.

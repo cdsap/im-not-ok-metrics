@@ -6,28 +6,36 @@
       "project_slug": "simple-app-for-profile",
       "configuration_slug": "clean-assemble-debug",
       "run_kind": "clean",
-      "gradle_command": "./gradlew clean assembleDebug --stacktrace"
+      "gradle_command": "./gradlew clean assembleDebug --stacktrace",
+      "gradle_gc_profile": "jdk23-g1-default",
+      "kotlin_gc_profile": "jdk23-parallel-default"
     },
     {
       "target_repository": "cdsap/simple-app-for-profile",
       "project_slug": "simple-app-for-profile",
       "configuration_slug": "warm-assemble-debug",
       "run_kind": "warm",
-      "gradle_command": "./gradlew assembleDebug --stacktrace"
+      "gradle_command": "./gradlew assembleDebug --stacktrace",
+      "gradle_gc_profile": "jdk23-g1-default",
+      "kotlin_gc_profile": "jdk23-parallel-default"
     },
     {
       "target_repository": "cdsap/simple-app-for-profile",
       "project_slug": "simple-app-for-profile",
       "configuration_slug": "lint-heavy",
       "run_kind": "lint",
-      "gradle_command": "./gradlew lintDebug --stacktrace"
+      "gradle_command": "./gradlew lintDebug --stacktrace",
+      "gradle_gc_profile": "jdk23-g1-default",
+      "kotlin_gc_profile": "jdk23-parallel-default"
     },
     {
       "target_repository": "cdsap/simple-app-for-profile",
       "project_slug": "simple-app-for-profile",
       "configuration_slug": "compile-heavy",
       "run_kind": "compile",
-      "gradle_command": "./gradlew :app:compileDebugKotlin --stacktrace"
+      "gradle_command": "./gradlew :app:compileDebugKotlin --stacktrace",
+      "gradle_gc_profile": "jdk23-g1-default",
+      "kotlin_gc_profile": "jdk23-parallel-default"
     }
   ]
 }

@@ -34,6 +34,9 @@ def main() -> int:
                     "configuration_slug": entry["configuration_slug"],
                     "run_kind": entry["run_kind"],
                     "gradle_command": entry["gradle_command"],
+                    "gradle_gc_profile": entry.get("gradle_gc_profile", ""),
+                    "kotlin_gc_profile": entry.get("kotlin_gc_profile", ""),
+                    "test_jvm_gc_profile": entry.get("test_jvm_gc_profile", ""),
                     "iteration": iteration,
                 }
             )

@@ -23,7 +23,7 @@ The harness produces raw per-run outputs under `artifacts/<run_id>/`. For corpus
 ## Why two extra metadata files
 
 - `project_profile.json` describes the workload family: module count, Kotlin/Java source volume, and whether the project uses KSP, KAPT, or Compose.
-- `run_profile.json` describes the specific run shape: project slug, configuration slug, run kind, iteration number, runner shape, and build command.
+- `run_profile.json` describes the specific run shape: project slug, configuration slug, run kind, iteration number, runner shape, build command, and declared per-role GC profiles.
 
 This separation lets you ask both kinds of questions:
 
@@ -56,3 +56,8 @@ scripts/index_dataset.sh artifacts
 ```
 
 This writes `artifacts/dataset_index.jsonl`, one JSON object per run, to make later analysis and clustering easier.
+
+The dataset index now includes both:
+
+- declared GC intent per role, from `run_profile.json`
+- observed GC per role, from the collected GC logs

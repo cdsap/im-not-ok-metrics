@@ -67,6 +67,12 @@ def load_metadata(path: Path) -> dict:
     return json.loads(path.read_text())
 
 
+def load_json(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    return json.loads(path.read_text())
+
+
 def load_pid_roles(path: Path) -> dict[str, dict]:
     roles: dict[str, dict] = {}
     if not path.exists():
@@ -418,6 +424,7 @@ def main() -> int:
 
     artifact_dir = Path(sys.argv[1]).resolve()
     metadata = load_metadata(artifact_dir / "metadata.json")
+    run_profile = load_json(artifact_dir / "run_profile.json")
     pid_roles = load_pid_roles(artifact_dir / "logs" / "os" / "discovered_pids.csv")
     process_summary, process_rows = summarize_process_metrics(artifact_dir / "logs" / "os" / "process_metrics.csv")
     gc_summary = summarize_gc(artifact_dir / "logs" / "gc")
@@ -461,6 +468,11 @@ def main() -> int:
 
     correlations = []
     observed_gc_profiles = {}
+    declared_gc_profiles = {
+        role: value
+        for role, value in (run_profile.get("declared_gc_profiles") or {}).items()
+        if value
+    }
     for pid, proc in per_process.items():
         role = proc.get("role")
         observed_gc_name = proc.get("gc", {}).get("observed_gc_name")
@@ -482,6 +494,7 @@ def main() -> int:
         "build_duration_seconds": build_duration,
         "build_exit_code": metadata.get("build_exit_code"),
         "develocity_build_scan": metadata.get("develocity_build_scan"),
+        "declared_gc_profiles": declared_gc_profiles,
         "observed_gc_profiles": observed_gc_profiles,
         "per_process": per_process,
         "correlated_peaks": correlations,
@@ -498,6 +511,11 @@ def main() -> int:
     ]
     if metadata.get("develocity_build_scan"):
         lines.append(f"- Build scan: {metadata['develocity_build_scan']}")
+    if declared_gc_profiles:
+        lines.append(
+            "- Declared GC profiles: "
+            + ", ".join(f"{role}={name}" for role, name in sorted(declared_gc_profiles.items()))
+        )
     lines.extend(["", "## Per-process highlights", ""])
 
     if per_process:

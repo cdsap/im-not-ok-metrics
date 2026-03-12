@@ -25,6 +25,7 @@ def normalize_entry(run_dir: Path) -> dict:
     summary = load_json(run_dir / "summary.json")
     project_profile = load_json(run_dir / "project_profile.json")
     run_profile = load_json(run_dir / "run_profile.json")
+    declared_gc_profiles = run_profile.get("declared_gc_profiles") or {}
 
     entry = {
         "run_dir": str(run_dir),
@@ -47,6 +48,9 @@ def normalize_entry(run_dir: Path) -> dict:
         "runner_os": run_profile.get("runner_os"),
         "runner_vcpus": run_profile.get("runner_vcpus"),
         "runner_memory_gb": run_profile.get("runner_memory_gb"),
+        "declared_gc_gradle_daemon": declared_gc_profiles.get("gradle-daemon"),
+        "declared_gc_kotlin_daemon": declared_gc_profiles.get("kotlin-daemon"),
+        "declared_gc_test_jvm": declared_gc_profiles.get("test-jvm"),
         "module_count": project_profile.get("module_count"),
         "kotlin_source_file_count": project_profile.get("kotlin_source_file_count"),
         "java_source_file_count": project_profile.get("java_source_file_count"),
