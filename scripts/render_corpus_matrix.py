@@ -3,8 +3,13 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
+
+
+def sanitize_slug(value: str) -> str:
+    return re.sub(r'[^A-Za-z0-9._-]+', "-", value).strip("-") or "project"
 
 
 def main() -> int:
@@ -25,6 +30,7 @@ def main() -> int:
                     "target_repository": entry["target_repository"],
                     "target_ref": entry.get("target_ref", ""),
                     "project_slug": entry["project_slug"],
+                    "artifact_slug": sanitize_slug(entry["project_slug"]),
                     "configuration_slug": entry["configuration_slug"],
                     "run_kind": entry["run_kind"],
                     "gradle_command": entry["gradle_command"],
