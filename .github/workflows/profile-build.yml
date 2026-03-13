@@ -15,6 +15,10 @@ on:
         description: Gradle command to run through the profiling harness
         required: false
         default: ./gradlew assembleDebug --stacktrace
+      gradle_task:
+        description: Optional Gradle task path, for example assembleRelease or :app:assembleRelease. Takes precedence over gradle_command when set.
+        required: false
+        default: ""
       configuration_slug:
         description: Stable dataset slug for this workload shape
         required: false
@@ -101,8 +105,18 @@ jobs:
           GRADLE_GC_PROFILE: ${{ inputs.gradle_gc_profile }}
           KOTLIN_GC_PROFILE: ${{ inputs.kotlin_gc_profile }}
           TEST_JVM_GC_PROFILE: ${{ inputs.test_jvm_gc_profile }}
+          INPUT_GRADLE_TASK: ${{ inputs.gradle_task }}
+          INPUT_GRADLE_COMMAND: ${{ inputs.gradle_command }}
         working-directory: ${{ github.workspace }}/harness
-        run: scripts/run_build.sh "${{ inputs.gradle_command || './gradlew assembleDebug --stacktrace' }}"
+        run: |
+          if [[ -n "$INPUT_GRADLE_TASK" ]]; then
+            BUILD_CMD="./gradlew $INPUT_GRADLE_TASK --stacktrace"
+          elif [[ -n "$INPUT_GRADLE_COMMAND" ]]; then
+            BUILD_CMD="$INPUT_GRADLE_COMMAND"
+          else
+            BUILD_CMD="./gradlew assembleDebug --stacktrace"
+          fi
+          scripts/run_build.sh "$BUILD_CMD"
 
       - name: Upload profiling artifacts
         if: always()

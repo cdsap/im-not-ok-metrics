@@ -23,6 +23,7 @@ Important inputs:
 - `target_repository`
 - `target_ref`
 - `gradle_command`
+- `gradle_task`
 - `configuration_slug`
 - `run_kind`
 - `gradle_gc_profile`
@@ -39,6 +40,7 @@ Important inputs:
 - `target_repository`
 - `target_ref`
 - `gradle_command`
+- `gradle_task`
 - `project_slug`
 - `configuration_slug`
 - `run_kind`
@@ -55,6 +57,12 @@ Example:
 ```
 
 This creates ten repeated runs of the same build shape, each with the same project/configuration labels and a different `iteration` value in `run_profile.json`.
+
+If you only want to choose a task such as `assembleRelease`, you can now use `gradle_task` instead of typing the full command. The workflow expands it to:
+
+```bash
+./gradlew <task> --stacktrace
+```
 
 ## Why this matters for "I'm not Ok"
 
