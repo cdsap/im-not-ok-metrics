@@ -140,6 +140,12 @@ jobs:
         working-directory: ${{ github.workspace }}/project
         run: /bin/bash -lc "$PREWARM_COMMAND"
 
+      - name: Remove local build cache from prewarmed Gradle user home
+        env:
+          GRADLE_USER_HOME: ${{ github.workspace }}/gradle-user-home
+        run: |
+          find "$GRADLE_USER_HOME/caches" -maxdepth 1 -type d -name 'build-cache-*' -exec rm -rf {} +
+
       - name: Save Gradle user home cache
         uses: actions/cache/save@v4
         with:

@@ -86,10 +86,11 @@ This workflow:
 
 1. creates a dedicated `GRADLE_USER_HOME`
 2. runs one prewarm command to populate wrapper and dependency caches
-3. saves that Gradle user home under a workflow-scoped cache key
-4. restores the same Gradle user home for each iteration job
+3. removes the local Gradle build cache from `GRADLE_USER_HOME/caches/build-cache-*`
+4. saves that Gradle user home under a workflow-scoped cache key
+5. restores the same Gradle user home for each iteration job
 
-This is the closest GitHub Actions analogue to Telltale-style cache warming while keeping iteration workspaces isolated.
+This preserves dependency and wrapper reuse while avoiding `FROM-CACHE` results caused by the prewarm job's local build cache.
 
 ## Why this matters for "I'm not Ok"
 
