@@ -4,11 +4,13 @@ The repository now has two GitHub Actions entry points:
 
 - `.github/workflows/profile-build.yml`
 - `.github/workflows/collect-corpus.yml`
+- `.github/workflows/collect-corpus-warm-guh.yml`
 
 ## Intent
 
 - `profile-build.yml` is the single-run path for validating a project or debugging one workload shape.
 - `collect-corpus.yml` is the dataset path for repeated executions across the same project configuration.
+- `collect-corpus-warm-guh.yml` is the repeated-run path that first prewarms a shared `GRADLE_USER_HOME` and then reuses it across iteration jobs.
 
 This follows the useful part of Telltale's model: treat execution as parameterized orchestration, not as a one-off shell command.
 
@@ -63,6 +65,31 @@ If you only want to choose a task such as `assembleRelease`, you can now use `gr
 ```bash
 ./gradlew <task> --stacktrace
 ```
+
+### Warm GUH corpus run
+
+Use `collect-corpus-warm-guh.yml` when you want each iteration to run in a clean workspace but reuse the same prewarmed Gradle user home.
+
+Important inputs:
+
+- `target_repository`
+- `target_ref`
+- `gradle_command`
+- `gradle_task`
+- `prewarm_command`
+- `project_slug`
+- `configuration_slug`
+- `run_kind`
+- `iterations_json`
+
+This workflow:
+
+1. creates a dedicated `GRADLE_USER_HOME`
+2. runs one prewarm command to populate wrapper and dependency caches
+3. saves that Gradle user home under a workflow-scoped cache key
+4. restores the same Gradle user home for each iteration job
+
+This is the closest GitHub Actions analogue to Telltale-style cache warming while keeping iteration workspaces isolated.
 
 ## Why this matters for "I'm not Ok"
 

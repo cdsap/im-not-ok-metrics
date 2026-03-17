@@ -1,0 +1,225 @@
+name: Collect Android GC Corpus With Warm Gradle User Home
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_repository:
+        description: owner/repo to profile
+        required: true
+        default: ""
+      target_ref:
+        description: Optional git ref for target_repository
+        required: false
+        default: ""
+      gradle_command:
+        description: Full Gradle command to execute when gradle_task is empty
+        required: false
+        default: ./gradlew assembleDebug --stacktrace
+      gradle_task:
+        description: Optional Gradle task path, for example assembleRelease or :app:assembleRelease. Takes precedence over gradle_command when set.
+        required: false
+        default: ""
+      prewarm_command:
+        description: Optional command used only to populate GRADLE_USER_HOME. Defaults to the resolved build command.
+        required: false
+        default: ""
+      iterations_json:
+        description: JSON array of iteration ids, for example [1,2,3,4,5,6,7,8,9,10]
+        required: false
+        default: "[1,2,3,4,5,6,7,8,9,10]"
+      project_slug:
+        description: Stable dataset slug for this project
+        required: false
+        default: ""
+      configuration_slug:
+        description: Stable dataset slug for this workload shape
+        required: false
+        default: assemble-debug
+      run_kind:
+        description: clean, warm, incremental, lint, test, or custom
+        required: false
+        default: warm
+      gradle_gc_profile:
+        description: Declared GC profile for the Gradle daemon
+        required: false
+        default: ""
+      kotlin_gc_profile:
+        description: Declared GC profile for the Kotlin daemon
+        required: false
+        default: ""
+      test_jvm_gc_profile:
+        description: Declared GC profile for test JVMs
+        required: false
+        default: ""
+      deep_mode:
+        description: Enable JFR collection
+        required: false
+        type: boolean
+        default: true
+
+jobs:
+  plan-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      artifact_slug: ${{ steps.plan.outputs.artifact_slug }}
+      project_slug: ${{ steps.plan.outputs.project_slug }}
+      resolved_command: ${{ steps.plan.outputs.resolved_command }}
+      prewarm_command: ${{ steps.plan.outputs.prewarm_command }}
+    steps:
+      - name: Check out harness repository
+        uses: actions/checkout@v4
+        with:
+          path: harness
+
+      - name: Plan execution matrix
+        id: plan
+        env:
+          INPUT_TARGET_REPOSITORY: ${{ inputs.target_repository }}
+          INPUT_TARGET_REF: ${{ inputs.target_ref }}
+          INPUT_PROJECT_SLUG: ${{ inputs.project_slug }}
+          INPUT_CONFIGURATION_SLUG: ${{ inputs.configuration_slug }}
+          INPUT_RUN_KIND: ${{ inputs.run_kind }}
+          INPUT_GRADLE_COMMAND: ${{ inputs.gradle_command }}
+          INPUT_GRADLE_TASK: ${{ inputs.gradle_task }}
+          INPUT_PREWARM_COMMAND: ${{ inputs.prewarm_command }}
+          INPUT_ITERATIONS_JSON: ${{ inputs.iterations_json }}
+          INPUT_GRADLE_GC_PROFILE: ${{ inputs.gradle_gc_profile }}
+          INPUT_KOTLIN_GC_PROFILE: ${{ inputs.kotlin_gc_profile }}
+          INPUT_TEST_JVM_GC_PROFILE: ${{ inputs.test_jvm_gc_profile }}
+        working-directory: ${{ github.workspace }}/harness
+        run: |
+          MATRIX_JSON="$(python3 -c 'import json, os, re; project_slug = os.environ["INPUT_PROJECT_SLUG"] or os.environ["INPUT_TARGET_REPOSITORY"]; artifact_slug = re.sub(r"[^A-Za-z0-9._-]+", "-", project_slug).strip("-") or "project"; iterations = json.loads(os.environ["INPUT_ITERATIONS_JSON"]); gradle_task = os.environ.get("INPUT_GRADLE_TASK", ""); gradle_command = os.environ["INPUT_GRADLE_COMMAND"]; resolved_command = ("./gradlew " + gradle_task + " --stacktrace") if gradle_task else gradle_command; prewarm_command = os.environ.get("INPUT_PREWARM_COMMAND", "") or resolved_command; payload = {"project_slug": project_slug, "artifact_slug": artifact_slug, "resolved_command": resolved_command, "prewarm_command": prewarm_command, "include": [{"target_repository": os.environ["INPUT_TARGET_REPOSITORY"], "target_ref": os.environ["INPUT_TARGET_REF"], "project_slug": project_slug, "artifact_slug": artifact_slug, "configuration_slug": os.environ["INPUT_CONFIGURATION_SLUG"], "run_kind": os.environ["INPUT_RUN_KIND"], "gradle_command": resolved_command, "gradle_gc_profile": os.environ["INPUT_GRADLE_GC_PROFILE"], "kotlin_gc_profile": os.environ["INPUT_KOTLIN_GC_PROFILE"], "test_jvm_gc_profile": os.environ["INPUT_TEST_JVM_GC_PROFILE"], "iteration": iteration} for iteration in iterations]}; print(json.dumps(payload, sort_keys=True))')"
+          echo "matrix=$(python3 -c 'import json, sys; print(json.dumps({"include": json.loads(sys.argv[1])["include"]}, sort_keys=True))' "$MATRIX_JSON")" >> "$GITHUB_OUTPUT"
+          echo "artifact_slug=$(python3 -c 'import json, sys; print(json.loads(sys.argv[1])["artifact_slug"])' "$MATRIX_JSON")" >> "$GITHUB_OUTPUT"
+          echo "project_slug=$(python3 -c 'import json, sys; print(json.loads(sys.argv[1])["project_slug"])' "$MATRIX_JSON")" >> "$GITHUB_OUTPUT"
+          echo "resolved_command=$(python3 -c 'import json, sys; print(json.loads(sys.argv[1])["resolved_command"])' "$MATRIX_JSON")" >> "$GITHUB_OUTPUT"
+          echo "prewarm_command=$(python3 -c 'import json, sys; print(json.loads(sys.argv[1])["prewarm_command"])' "$MATRIX_JSON")" >> "$GITHUB_OUTPUT"
+
+  prewarm-gradle-user-home:
+    needs: plan-matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out harness repository
+        uses: actions/checkout@v4
+        with:
+          path: harness
+
+      - name: Check out target project repository default branch
+        uses: actions/checkout@v4
+        if: ${{ inputs.target_ref == '' }}
+        with:
+          repository: ${{ inputs.target_repository }}
+          path: project
+
+      - name: Check out target project repository explicit ref
+        uses: actions/checkout@v4
+        if: ${{ inputs.target_ref != '' }}
+        with:
+          repository: ${{ inputs.target_repository }}
+          ref: ${{ inputs.target_ref }}
+          path: project
+
+      - name: Set up JDK 23
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "23"
+
+      - name: Restore Gradle user home cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ github.workspace }}/gradle-user-home
+          key: warm-guh-${{ github.run_id }}
+
+      - name: Prewarm Gradle user home
+        env:
+          GRADLE_USER_HOME: ${{ github.workspace }}/gradle-user-home
+          PREWARM_COMMAND: ${{ needs.plan-matrix.outputs.prewarm_command }}
+        working-directory: ${{ github.workspace }}/project
+        run: /bin/bash -lc "$PREWARM_COMMAND"
+
+      - name: Save Gradle user home cache
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ github.workspace }}/gradle-user-home
+          key: warm-guh-${{ github.run_id }}
+
+  collect:
+    needs:
+      - plan-matrix
+      - prewarm-gradle-user-home
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.plan-matrix.outputs.matrix) }}
+
+    steps:
+      - name: Check out harness repository
+        uses: actions/checkout@v4
+        with:
+          path: harness
+
+      - name: Check out target project repository default branch
+        uses: actions/checkout@v4
+        if: ${{ matrix.target_ref == '' }}
+        with:
+          repository: ${{ matrix.target_repository }}
+          path: project
+
+      - name: Check out target project repository explicit ref
+        uses: actions/checkout@v4
+        if: ${{ matrix.target_ref != '' }}
+        with:
+          repository: ${{ matrix.target_repository }}
+          ref: ${{ matrix.target_ref }}
+          path: project
+
+      - name: Set up JDK 23
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "23"
+
+      - name: Make harness scripts executable
+        run: chmod +x harness/scripts/*.sh harness/scripts/*.py
+
+      - name: Restore prewarmed Gradle user home
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ github.workspace }}/gradle-user-home
+          key: warm-guh-${{ github.run_id }}
+
+      - name: Run profiled corpus collection with warm Gradle user home
+        env:
+          DEEP: ${{ inputs.deep_mode == true && '1' || '0' }}
+          PROJECT_ROOT: ${{ github.workspace }}/project
+          PROJECT_SLUG: ${{ matrix.project_slug }}
+          CONFIGURATION_SLUG: ${{ matrix.configuration_slug }}
+          RUN_KIND: ${{ matrix.run_kind }}
+          ITERATION: ${{ matrix.iteration }}
+          RUNNER_OS: ubuntu-latest
+          RUNNER_VCPUS: "4"
+          RUNNER_MEMORY_GB: "16"
+          GRADLE_USER_HOME: ${{ github.workspace }}/gradle-user-home
+          GRADLE_GC_PROFILE: ${{ matrix.gradle_gc_profile }}
+          KOTLIN_GC_PROFILE: ${{ matrix.kotlin_gc_profile }}
+          TEST_JVM_GC_PROFILE: ${{ matrix.test_jvm_gc_profile }}
+        working-directory: ${{ github.workspace }}/harness
+        run: scripts/run_build.sh "${{ matrix.gradle_command }}"
+
+      - name: Build dataset index for this workspace
+        if: always()
+        continue-on-error: true
+        working-directory: ${{ github.workspace }}/harness
+        run: scripts/index_dataset.sh "${{ github.workspace }}/project/artifacts"
+
+      - name: Upload corpus artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: warm-guh-corpus-${{ matrix.artifact_slug }}-${{ matrix.configuration_slug }}-iter-${{ matrix.iteration }}
+          path: |
+            project/artifacts/
