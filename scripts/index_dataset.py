@@ -69,20 +69,22 @@ def normalize_entry(run_dir: Path) -> dict:
     per_process = summary.get("per_process", {})
     for pid, proc in per_process.items():
         role = proc.get("role")
+        gc = proc.get("gc") or {}
+        jfr = proc.get("jfr") or {}
         if role == "gradle-daemon":
             entry["gradle_daemon_max_rss_kb"] = proc.get("max_rss_kb")
-            entry["gradle_daemon_gc_p95_ms"] = proc.get("gc", {}).get("p95_ms")
-            entry["gradle_daemon_gc_max_ms"] = proc.get("gc", {}).get("max_ms")
-            entry["observed_gc_gradle_daemon"] = proc.get("gc", {}).get("observed_gc_name")
-            entry["gradle_daemon_alloc_mode"] = proc.get("jfr", {}).get("mode")
-            entry["gradle_daemon_alloc_rate_mb_per_s"] = proc.get("jfr", {}).get("allocation_rate_mb_per_s")
+            entry["gradle_daemon_gc_p95_ms"] = gc.get("p95_ms")
+            entry["gradle_daemon_gc_max_ms"] = gc.get("max_ms")
+            entry["observed_gc_gradle_daemon"] = gc.get("observed_gc_name")
+            entry["gradle_daemon_alloc_mode"] = jfr.get("mode")
+            entry["gradle_daemon_alloc_rate_mb_per_s"] = jfr.get("allocation_rate_mb_per_s")
         if role == "kotlin-daemon":
             entry["kotlin_daemon_max_rss_kb"] = proc.get("max_rss_kb")
-            entry["kotlin_daemon_gc_p95_ms"] = proc.get("gc", {}).get("p95_ms")
-            entry["kotlin_daemon_gc_max_ms"] = proc.get("gc", {}).get("max_ms")
-            entry["observed_gc_kotlin_daemon"] = proc.get("gc", {}).get("observed_gc_name")
-            entry["kotlin_daemon_alloc_mode"] = proc.get("jfr", {}).get("mode")
-            entry["kotlin_daemon_alloc_rate_mb_per_s"] = proc.get("jfr", {}).get("allocation_rate_mb_per_s")
+            entry["kotlin_daemon_gc_p95_ms"] = gc.get("p95_ms")
+            entry["kotlin_daemon_gc_max_ms"] = gc.get("max_ms")
+            entry["observed_gc_kotlin_daemon"] = gc.get("observed_gc_name")
+            entry["kotlin_daemon_alloc_mode"] = jfr.get("mode")
+            entry["kotlin_daemon_alloc_rate_mb_per_s"] = jfr.get("allocation_rate_mb_per_s")
     return entry
 
 
@@ -94,7 +96,12 @@ def main() -> int:
     root = Path(sys.argv[1]).resolve()
     output = Path(sys.argv[2]).resolve() if len(sys.argv) == 3 else root / "dataset_index.jsonl"
 
-    entries = [normalize_entry(run_dir) for run_dir in collect_run_dirs(root)]
+    entries = []
+    for run_dir in collect_run_dirs(root):
+        try:
+            entries.append(normalize_entry(run_dir))
+        except Exception as exc:
+            print(f"warning: skipping {run_dir}: {exc}", file=sys.stderr)
     output.parent.mkdir(parents=True, exist_ok=True)
     with output.open("w", encoding="utf-8") as fh:
         for entry in entries:
