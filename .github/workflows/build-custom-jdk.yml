@@ -1,0 +1,134 @@
+name: Build Custom JDK
+
+on:
+  workflow_dispatch:
+    inputs:
+      jdk_repository:
+        description: owner/repo for the OpenJDK fork to build
+        required: false
+        default: cdsap/jdk
+      jdk_ref:
+        description: Optional git ref for the JDK repository
+        required: false
+        default: ""
+      boot_jdk_version:
+        description: Boot JDK version used for the build
+        required: false
+        default: "23"
+      configure_args:
+        description: Optional extra arguments passed to bash configure
+        required: false
+        default: ""
+      artifact_name:
+        description: Optional artifact name override
+        required: false
+        default: ""
+
+jobs:
+  build-jdk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+      - name: Check out harness repository
+        uses: actions/checkout@v4
+        with:
+          path: harness
+
+      - name: Check out JDK repository default branch
+        uses: actions/checkout@v4
+        if: ${{ inputs.jdk_ref == '' }}
+        with:
+          repository: ${{ inputs.jdk_repository }}
+          path: jdk
+
+      - name: Check out JDK repository explicit ref
+        uses: actions/checkout@v4
+        if: ${{ inputs.jdk_ref != '' }}
+        with:
+          repository: ${{ inputs.jdk_repository }}
+          ref: ${{ inputs.jdk_ref }}
+          path: jdk
+
+      - name: Set up boot JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ inputs.boot_jdk_version }}
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y autoconf make zip unzip build-essential file
+
+      - name: Configure JDK build
+        working-directory: ${{ github.workspace }}/jdk
+        env:
+          INPUT_CONFIGURE_ARGS: ${{ inputs.configure_args }}
+        run: |
+          CONFIGURE_ARGS=(--with-debug-level=release)
+          if [[ -n "$INPUT_CONFIGURE_ARGS" ]]; then
+            # shellcheck disable=SC2206
+            EXTRA_ARGS=($INPUT_CONFIGURE_ARGS)
+            CONFIGURE_ARGS+=("${EXTRA_ARGS[@]}")
+          fi
+          bash configure "${CONFIGURE_ARGS[@]}"
+
+      - name: Build JDK images
+        working-directory: ${{ github.workspace }}/jdk
+        run: make images
+
+      - name: Locate built JDK image
+        id: locate
+        working-directory: ${{ github.workspace }}/jdk
+        run: |
+          JDK_IMAGE="$(find build -type d -path '*/images/jdk' | head -n 1)"
+          if [[ -z "$JDK_IMAGE" ]]; then
+            echo "Could not locate built JDK image under build/" >&2
+            exit 1
+          fi
+          IMAGE_PARENT="$(dirname "$JDK_IMAGE")"
+          echo "jdk_image=$JDK_IMAGE" >> "$GITHUB_OUTPUT"
+          echo "image_parent=$IMAGE_PARENT" >> "$GITHUB_OUTPUT"
+
+      - name: Package built JDK
+        id: package
+        working-directory: ${{ github.workspace }}/jdk
+        env:
+          INPUT_ARTIFACT_NAME: ${{ inputs.artifact_name }}
+          INPUT_JDK_REPOSITORY: ${{ inputs.jdk_repository }}
+          INPUT_JDK_REF: ${{ inputs.jdk_ref }}
+          INPUT_BOOT_JDK_VERSION: ${{ inputs.boot_jdk_version }}
+          IMAGE_PARENT: ${{ steps.locate.outputs.image_parent }}
+          JDK_IMAGE: ${{ steps.locate.outputs.jdk_image }}
+        run: |
+          RESOLVED_REF="$(git rev-parse HEAD)"
+          BUILD_NAME="${INPUT_ARTIFACT_NAME:-custom-jdk-linux-${RESOLVED_REF:0:12}}"
+          export RESOLVED_REF BUILD_NAME
+          ARCHIVE_PATH="$GITHUB_WORKSPACE/$BUILD_NAME.tar.gz"
+          METADATA_PATH="$GITHUB_WORKSPACE/$BUILD_NAME.metadata.json"
+          tar -C "$IMAGE_PARENT" -czf "$ARCHIVE_PATH" jdk
+          python3 - <<'PY' > "$METADATA_PATH"
+import json
+import os
+
+data = {
+    "artifact_name": os.environ["BUILD_NAME"],
+    "jdk_repository": os.environ["INPUT_JDK_REPOSITORY"],
+    "requested_ref": os.environ["INPUT_JDK_REF"] or None,
+    "resolved_sha": os.environ["RESOLVED_REF"],
+    "boot_jdk_version": os.environ["INPUT_BOOT_JDK_VERSION"],
+    "jdk_image": os.environ["JDK_IMAGE"],
+    "runner_os": "ubuntu-latest",
+}
+print(json.dumps(data, indent=2, sort_keys=True))
+PY
+          echo "artifact_name=$BUILD_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Upload packaged JDK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.artifact_name }}
+          path: |
+            ${{ github.workspace }}/${{ steps.package.outputs.artifact_name }}.tar.gz
+            ${{ github.workspace }}/${{ steps.package.outputs.artifact_name }}.metadata.json
