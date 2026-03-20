@@ -108,21 +108,7 @@ jobs:
           ARCHIVE_PATH="$GITHUB_WORKSPACE/$BUILD_NAME.tar.gz"
           METADATA_PATH="$GITHUB_WORKSPACE/$BUILD_NAME.metadata.json"
           tar -C "$IMAGE_PARENT" -czf "$ARCHIVE_PATH" jdk
-          python3 - <<'PY' > "$METADATA_PATH"
-          import json
-          import os
-
-          data = {
-              "artifact_name": os.environ["BUILD_NAME"],
-              "jdk_repository": os.environ["INPUT_JDK_REPOSITORY"],
-              "requested_ref": os.environ["INPUT_JDK_REF"] or None,
-              "resolved_sha": os.environ["RESOLVED_REF"],
-              "boot_jdk_version": os.environ["INPUT_BOOT_JDK_VERSION"],
-              "jdk_image": os.environ["JDK_IMAGE"],
-              "runner_os": "ubuntu-latest",
-          }
-          print(json.dumps(data, indent=2, sort_keys=True))
-          PY
+          python3 -c 'import json, os, pathlib; pathlib.Path(os.environ["METADATA_PATH"]).write_text(json.dumps({"artifact_name": os.environ["BUILD_NAME"], "jdk_repository": os.environ["INPUT_JDK_REPOSITORY"], "requested_ref": os.environ["INPUT_JDK_REF"] or None, "resolved_sha": os.environ["RESOLVED_REF"], "boot_jdk_version": os.environ["INPUT_BOOT_JDK_VERSION"], "jdk_image": os.environ["JDK_IMAGE"], "runner_os": "ubuntu-latest"}, indent=2, sort_keys=True) + "\n", encoding="utf-8")'
           echo "artifact_name=$BUILD_NAME" >> "$GITHUB_OUTPUT"
 
       - name: Upload packaged JDK
