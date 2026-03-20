@@ -56,6 +56,30 @@ on:
         required: false
         type: boolean
         default: true
+      jdk_source_repository:
+        description: Repository that produced the custom JDK artifact
+        required: false
+        default: cdsap/im-not-ok-metrics
+      jdk_build_run_id:
+        description: Workflow run id that contains the custom JDK artifact. Leave empty to use Temurin.
+        required: false
+        default: "23355574138"
+      jdk_artifact_name:
+        description: Artifact name uploaded by the custom JDK build workflow
+        required: false
+        default: custom-jdk-linux-9ad2e63f1763
+      fallback_java_distribution:
+        description: setup-java distribution used only when jdk_build_run_id is empty
+        required: false
+        default: temurin
+      fallback_java_version:
+        description: setup-java version used only when jdk_build_run_id is empty
+        required: false
+        default: "23"
+
+permissions:
+  contents: read
+  actions: read
 
 jobs:
   plan-matrix:
@@ -121,11 +145,37 @@ jobs:
           ref: ${{ inputs.target_ref }}
           path: project
 
-      - name: Set up JDK 23
+      - name: Set up fallback JDK
+        if: ${{ inputs.jdk_build_run_id == '' }}
         uses: actions/setup-java@v4
         with:
-          distribution: temurin
-          java-version: "23"
+          distribution: ${{ inputs.fallback_java_distribution }}
+          java-version: ${{ inputs.fallback_java_version }}
+
+      - name: Download custom JDK artifact
+        if: ${{ inputs.jdk_build_run_id != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "${{ github.workspace }}/custom-jdk"
+          gh run download "${{ inputs.jdk_build_run_id }}" \
+            --repo "${{ inputs.jdk_source_repository }}" \
+            --name "${{ inputs.jdk_artifact_name }}" \
+            --dir "${{ github.workspace }}/custom-jdk"
+
+      - name: Unpack custom JDK
+        if: ${{ inputs.jdk_build_run_id != '' }}
+        run: |
+          mkdir -p "${{ github.workspace }}/custom-jdk/unpacked"
+          tar -xzf "${{ github.workspace }}/custom-jdk/${{ inputs.jdk_artifact_name }}.tar.gz" \
+            -C "${{ github.workspace }}/custom-jdk/unpacked"
+          echo "JAVA_HOME=${{ github.workspace }}/custom-jdk/unpacked/jdk" >> "$GITHUB_ENV"
+          echo "${{ github.workspace }}/custom-jdk/unpacked/jdk/bin" >> "$GITHUB_PATH"
+
+      - name: Print active Java
+        run: |
+          java -version
+          echo "JAVA_HOME=${JAVA_HOME:-unset}"
 
       - name: Restore Gradle user home cache
         uses: actions/cache/restore@v4
@@ -183,11 +233,37 @@ jobs:
           ref: ${{ matrix.target_ref }}
           path: project
 
-      - name: Set up JDK 23
+      - name: Set up fallback JDK
+        if: ${{ inputs.jdk_build_run_id == '' }}
         uses: actions/setup-java@v4
         with:
-          distribution: temurin
-          java-version: "23"
+          distribution: ${{ inputs.fallback_java_distribution }}
+          java-version: ${{ inputs.fallback_java_version }}
+
+      - name: Download custom JDK artifact
+        if: ${{ inputs.jdk_build_run_id != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "${{ github.workspace }}/custom-jdk"
+          gh run download "${{ inputs.jdk_build_run_id }}" \
+            --repo "${{ inputs.jdk_source_repository }}" \
+            --name "${{ inputs.jdk_artifact_name }}" \
+            --dir "${{ github.workspace }}/custom-jdk"
+
+      - name: Unpack custom JDK
+        if: ${{ inputs.jdk_build_run_id != '' }}
+        run: |
+          mkdir -p "${{ github.workspace }}/custom-jdk/unpacked"
+          tar -xzf "${{ github.workspace }}/custom-jdk/${{ inputs.jdk_artifact_name }}.tar.gz" \
+            -C "${{ github.workspace }}/custom-jdk/unpacked"
+          echo "JAVA_HOME=${{ github.workspace }}/custom-jdk/unpacked/jdk" >> "$GITHUB_ENV"
+          echo "${{ github.workspace }}/custom-jdk/unpacked/jdk/bin" >> "$GITHUB_PATH"
+
+      - name: Print active Java
+        run: |
+          java -version
+          echo "JAVA_HOME=${JAVA_HOME:-unset}"
 
       - name: Make harness scripts executable
         run: chmod +x harness/scripts/*.sh harness/scripts/*.py
