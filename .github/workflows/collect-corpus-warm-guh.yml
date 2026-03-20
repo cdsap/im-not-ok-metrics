@@ -39,6 +39,10 @@ on:
         description: clean, warm, incremental, lint, test, or custom
         required: false
         default: warm
+      gc_variant:
+        description: High-level GC variant label used to derive declared GC profiles
+        required: false
+        default: baseline-openjdk
       gradle_gc_profile:
         description: Declared GC profile for the Gradle daemon
         required: false
@@ -61,21 +65,13 @@ on:
         required: false
         default: cdsap/im-not-ok-metrics
       jdk_build_run_id:
-        description: Workflow run id that contains the custom JDK artifact. Leave empty to use Temurin.
+        description: Workflow run id that contains the custom JDK artifact
         required: false
         default: "23355574138"
       jdk_artifact_name:
         description: Artifact name uploaded by the custom JDK build workflow
         required: false
         default: custom-jdk-linux-9ad2e63f1763
-      fallback_java_distribution:
-        description: setup-java distribution used only when jdk_build_run_id is empty
-        required: false
-        default: temurin
-      fallback_java_version:
-        description: setup-java version used only when jdk_build_run_id is empty
-        required: false
-        default: "23"
 
 permissions:
   contents: read
@@ -104,6 +100,7 @@ jobs:
           INPUT_PROJECT_SLUG: ${{ inputs.project_slug }}
           INPUT_CONFIGURATION_SLUG: ${{ inputs.configuration_slug }}
           INPUT_RUN_KIND: ${{ inputs.run_kind }}
+          INPUT_GC_VARIANT: ${{ inputs.gc_variant }}
           INPUT_GRADLE_COMMAND: ${{ inputs.gradle_command }}
           INPUT_GRADLE_TASK: ${{ inputs.gradle_task }}
           INPUT_PREWARM_COMMAND: ${{ inputs.prewarm_command }}
@@ -113,7 +110,7 @@ jobs:
           INPUT_TEST_JVM_GC_PROFILE: ${{ inputs.test_jvm_gc_profile }}
         working-directory: ${{ github.workspace }}/harness
         run: |
-          MATRIX_JSON="$(python3 -c 'import json, os, re; project_slug = os.environ["INPUT_PROJECT_SLUG"] or os.environ["INPUT_TARGET_REPOSITORY"]; artifact_slug = re.sub(r"[^A-Za-z0-9._-]+", "-", project_slug).strip("-") or "project"; iterations = json.loads(os.environ["INPUT_ITERATIONS_JSON"]); gradle_task = os.environ.get("INPUT_GRADLE_TASK", ""); gradle_command = os.environ["INPUT_GRADLE_COMMAND"]; resolved_command = ("./gradlew " + gradle_task + " --stacktrace") if gradle_task else gradle_command; prewarm_command = os.environ.get("INPUT_PREWARM_COMMAND", "") or resolved_command; payload = {"project_slug": project_slug, "artifact_slug": artifact_slug, "resolved_command": resolved_command, "prewarm_command": prewarm_command, "include": [{"target_repository": os.environ["INPUT_TARGET_REPOSITORY"], "target_ref": os.environ["INPUT_TARGET_REF"], "project_slug": project_slug, "artifact_slug": artifact_slug, "configuration_slug": os.environ["INPUT_CONFIGURATION_SLUG"], "run_kind": os.environ["INPUT_RUN_KIND"], "gradle_command": resolved_command, "gradle_gc_profile": os.environ["INPUT_GRADLE_GC_PROFILE"], "kotlin_gc_profile": os.environ["INPUT_KOTLIN_GC_PROFILE"], "test_jvm_gc_profile": os.environ["INPUT_TEST_JVM_GC_PROFILE"], "iteration": iteration} for iteration in iterations]}; print(json.dumps(payload, sort_keys=True))')"
+          MATRIX_JSON="$(python3 -c 'import json, os, re; project_slug = os.environ["INPUT_PROJECT_SLUG"] or os.environ["INPUT_TARGET_REPOSITORY"]; artifact_slug = re.sub(r"[^A-Za-z0-9._-]+", "-", project_slug).strip("-") or "project"; iterations = json.loads(os.environ["INPUT_ITERATIONS_JSON"]); gradle_task = os.environ.get("INPUT_GRADLE_TASK", ""); gradle_command = os.environ["INPUT_GRADLE_COMMAND"]; resolved_command = ("./gradlew " + gradle_task + " --stacktrace") if gradle_task else gradle_command; prewarm_command = os.environ.get("INPUT_PREWARM_COMMAND", "") or resolved_command; gc_variant = os.environ.get("INPUT_GC_VARIANT", "").strip(); variants = {"baseline-openjdk": {"gradle_gc_profile": "openjdk-default", "kotlin_gc_profile": "repo-default", "test_jvm_gc_profile": "repo-default"}, "imnotokay": {"gradle_gc_profile": "imnotokay", "kotlin_gc_profile": "imnotokay", "test_jvm_gc_profile": "imnotokay"}}; derived = variants.get(gc_variant, {}); gradle_gc_profile = os.environ["INPUT_GRADLE_GC_PROFILE"] or derived.get("gradle_gc_profile", ""); kotlin_gc_profile = os.environ["INPUT_KOTLIN_GC_PROFILE"] or derived.get("kotlin_gc_profile", ""); test_jvm_gc_profile = os.environ["INPUT_TEST_JVM_GC_PROFILE"] or derived.get("test_jvm_gc_profile", ""); payload = {"project_slug": project_slug, "artifact_slug": artifact_slug, "resolved_command": resolved_command, "prewarm_command": prewarm_command, "include": [{"target_repository": os.environ["INPUT_TARGET_REPOSITORY"], "target_ref": os.environ["INPUT_TARGET_REF"], "project_slug": project_slug, "artifact_slug": artifact_slug, "configuration_slug": os.environ["INPUT_CONFIGURATION_SLUG"], "run_kind": os.environ["INPUT_RUN_KIND"], "gradle_command": resolved_command, "gc_variant": gc_variant, "gradle_gc_profile": gradle_gc_profile, "kotlin_gc_profile": kotlin_gc_profile, "test_jvm_gc_profile": test_jvm_gc_profile, "iteration": iteration} for iteration in iterations]}; print(json.dumps(payload, sort_keys=True))')"
           echo "matrix=$(python3 -c 'import json, sys; print(json.dumps({"include": json.loads(sys.argv[1])["include"]}, sort_keys=True))' "$MATRIX_JSON")" >> "$GITHUB_OUTPUT"
           echo "artifact_slug=$(python3 -c 'import json, sys; print(json.loads(sys.argv[1])["artifact_slug"])' "$MATRIX_JSON")" >> "$GITHUB_OUTPUT"
           echo "project_slug=$(python3 -c 'import json, sys; print(json.loads(sys.argv[1])["project_slug"])' "$MATRIX_JSON")" >> "$GITHUB_OUTPUT"
@@ -145,18 +142,11 @@ jobs:
           ref: ${{ inputs.target_ref }}
           path: project
 
-      - name: Set up fallback JDK
-        if: ${{ inputs.jdk_build_run_id == '' }}
-        uses: actions/setup-java@v4
-        with:
-          distribution: ${{ inputs.fallback_java_distribution }}
-          java-version: ${{ inputs.fallback_java_version }}
-
       - name: Download custom JDK artifact
-        if: ${{ inputs.jdk_build_run_id != '' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          test -n "${{ inputs.jdk_build_run_id }}"
           mkdir -p "${{ github.workspace }}/custom-jdk"
           gh run download "${{ inputs.jdk_build_run_id }}" \
             --repo "${{ inputs.jdk_source_repository }}" \
@@ -164,11 +154,11 @@ jobs:
             --dir "${{ github.workspace }}/custom-jdk"
 
       - name: Unpack custom JDK
-        if: ${{ inputs.jdk_build_run_id != '' }}
         run: |
           mkdir -p "${{ github.workspace }}/custom-jdk/unpacked"
           tar -xzf "${{ github.workspace }}/custom-jdk/${{ inputs.jdk_artifact_name }}.tar.gz" \
             -C "${{ github.workspace }}/custom-jdk/unpacked"
+          test -x "${{ github.workspace }}/custom-jdk/unpacked/jdk/bin/java"
           echo "JAVA_HOME=${{ github.workspace }}/custom-jdk/unpacked/jdk" >> "$GITHUB_ENV"
           echo "${{ github.workspace }}/custom-jdk/unpacked/jdk/bin" >> "$GITHUB_PATH"
 
@@ -233,18 +223,11 @@ jobs:
           ref: ${{ matrix.target_ref }}
           path: project
 
-      - name: Set up fallback JDK
-        if: ${{ inputs.jdk_build_run_id == '' }}
-        uses: actions/setup-java@v4
-        with:
-          distribution: ${{ inputs.fallback_java_distribution }}
-          java-version: ${{ inputs.fallback_java_version }}
-
       - name: Download custom JDK artifact
-        if: ${{ inputs.jdk_build_run_id != '' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          test -n "${{ inputs.jdk_build_run_id }}"
           mkdir -p "${{ github.workspace }}/custom-jdk"
           gh run download "${{ inputs.jdk_build_run_id }}" \
             --repo "${{ inputs.jdk_source_repository }}" \
@@ -252,11 +235,11 @@ jobs:
             --dir "${{ github.workspace }}/custom-jdk"
 
       - name: Unpack custom JDK
-        if: ${{ inputs.jdk_build_run_id != '' }}
         run: |
           mkdir -p "${{ github.workspace }}/custom-jdk/unpacked"
           tar -xzf "${{ github.workspace }}/custom-jdk/${{ inputs.jdk_artifact_name }}.tar.gz" \
             -C "${{ github.workspace }}/custom-jdk/unpacked"
+          test -x "${{ github.workspace }}/custom-jdk/unpacked/jdk/bin/java"
           echo "JAVA_HOME=${{ github.workspace }}/custom-jdk/unpacked/jdk" >> "$GITHUB_ENV"
           echo "${{ github.workspace }}/custom-jdk/unpacked/jdk/bin" >> "$GITHUB_PATH"
 
@@ -289,6 +272,7 @@ jobs:
           GRADLE_GC_PROFILE: ${{ matrix.gradle_gc_profile }}
           KOTLIN_GC_PROFILE: ${{ matrix.kotlin_gc_profile }}
           TEST_JVM_GC_PROFILE: ${{ matrix.test_jvm_gc_profile }}
+          GC_VARIANT: ${{ matrix.gc_variant }}
         working-directory: ${{ github.workspace }}/harness
         run: scripts/run_build.sh "${{ matrix.gradle_command }}"
 
