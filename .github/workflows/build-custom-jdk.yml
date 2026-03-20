@@ -98,7 +98,7 @@ jobs:
         id: locate
         working-directory: ${{ github.workspace }}/jdk
         run: |
-          JDK_IMAGE="$(find build -type d -path '*/images/jdk' | head -n 1)"
+          JDK_IMAGE="$(find build -type d -path '*/images/jdk' ! -path '*/support/images/jdk' | head -n 1)"
           if [[ -z "$JDK_IMAGE" ]]; then
             echo "Could not locate built JDK image under build/" >&2
             exit 1
