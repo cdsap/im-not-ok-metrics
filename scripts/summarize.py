@@ -18,6 +18,7 @@ from pathlib import Path
 ISO_FORMATS = ("%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%dT%H:%M:%S.%fZ")
 JFR_PARSE_TIMEOUT_SECONDS = int(os.environ.get("JFR_PARSE_TIMEOUT_SECONDS", "90"))
 JFR_MAX_PARSE_BYTES = int(os.environ.get("JFR_MAX_PARSE_BYTES", str(96 * 1024 * 1024)))
+PARSE_JFR_SUMMARY = os.environ.get("PARSE_JFR_SUMMARY", "0") == "1"
 
 
 def parse_ts(value: str | None) -> datetime | None:
@@ -327,7 +328,7 @@ def parse_jfr_allocation_file(jfr_path: Path) -> dict | None:
 
 def summarize_jfr(jfr_dir: Path, build_duration_seconds: float | None) -> dict[str, dict]:
     stats: dict[str, dict] = {}
-    if not jfr_dir.exists():
+    if not PARSE_JFR_SUMMARY or not jfr_dir.exists():
         return stats
 
     best_by_pid: dict[str, tuple[Path, int]] = {}
