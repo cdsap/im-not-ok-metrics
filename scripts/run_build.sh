@@ -31,6 +31,7 @@ SAMPLING_CONFIG_FILE="$HARNESS_ROOT_DIR/configs/sampling_config.env"
 DEEP="${DEEP:-0}"
 ENABLE_JCMD_ATTACH="${ENABLE_JCMD_ATTACH:-1}"
 ENABLE_JCMD_DYNAMIC_GC_LOGS="${ENABLE_JCMD_DYNAMIC_GC_LOGS:-1}"
+ATTACH_JCMD_ALLOWED_ROLES="${ATTACH_JCMD_ALLOWED_ROLES:-gradle-daemon,kotlin-daemon,test-jvm}"
 RUN_KIND="${RUN_KIND:-ad-hoc}"
 PROJECT_SLUG="${PROJECT_SLUG:-$(basename "$PROJECT_ROOT")}"
 CONFIGURATION_SLUG="${CONFIGURATION_SLUG:-default}"
@@ -225,10 +226,18 @@ attach_loop() {
   trap 'exit 0' INT TERM
   while true; do
     if [[ -f "$DISCOVERED_PIDS_FILE" ]]; then
-      awk -F, 'NR > 1 {print $2}' "$DISCOVERED_PIDS_FILE" | sort -u | while read -r pid; do
+      awk -F, 'NR > 1 {print $2","$3}' "$DISCOVERED_PIDS_FILE" | sort -u | while IFS=, read -r pid role; do
         [[ -n "$pid" ]] || continue
         grep -qx "$pid" "$seen_file" 2>/dev/null && continue
         kill -0 "$pid" 2>/dev/null || continue
+        case ",$ATTACH_JCMD_ALLOWED_ROLES," in
+          *",$role,"*)
+            ;;
+          *)
+            printf '%s\n' "$pid" >>"$seen_file"
+            continue
+            ;;
+        esac
         if [[ "$ENABLE_JCMD_ATTACH" == "1" ]]; then
           enable_dynamic_gc_logging "$pid" || warn "Could not enable dynamic GC logging for pid $pid"
           enable_jfr_attach "$pid" || {
