@@ -42,6 +42,7 @@ RUNNER_MEMORY_GB="${RUNNER_MEMORY_GB:-}"
 GRADLE_GC_PROFILE="${GRADLE_GC_PROFILE:-}"
 KOTLIN_GC_PROFILE="${KOTLIN_GC_PROFILE:-}"
 TEST_JVM_GC_PROFILE="${TEST_JVM_GC_PROFILE:-}"
+GC_OVERRIDE_REPORT_FILE="$ARTIFACT_DIR/gc_override_report.json"
 
 mkdir -p "$GC_DIR" "$JFR_DIR" "$OS_DIR" "$GRADLE_DIR"
 : >"$WARNINGS_FILE"
@@ -356,6 +357,13 @@ export RUN_PROFILE_GRADLE_GC_PROFILE="$GRADLE_GC_PROFILE"
 export RUN_PROFILE_KOTLIN_GC_PROFILE="$KOTLIN_GC_PROFILE"
 export RUN_PROFILE_TEST_JVM_GC_PROFILE="$TEST_JVM_GC_PROFILE"
 write_run_profile
+
+if [[ -x "$SCRIPT_DIR/apply_gc_variant_overrides.py" ]]; then
+  python3 "$SCRIPT_DIR/apply_gc_variant_overrides.py" "$PROJECT_ROOT" \
+    --gc-variant "${GC_VARIANT:-}" \
+    --report-file "$GC_OVERRIDE_REPORT_FILE" \
+    || warn "Could not apply GC variant project overrides"
+fi
 
 if [[ -x "$SCRIPT_DIR/project_profile.py" ]]; then
   python3 "$SCRIPT_DIR/project_profile.py" "$PROJECT_ROOT" "$PROJECT_PROFILE_FILE" || warn "Project profiling failed"
