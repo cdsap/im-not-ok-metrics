@@ -186,6 +186,20 @@ def parse_observed_gc_name(log_path: Path) -> str | None:
     return None
 
 
+def declared_profile_to_collector_name(declared_profile: str | None) -> str | None:
+    if not declared_profile:
+        return None
+    normalized = declared_profile.strip().lower()
+    if normalized == "imnotokay":
+        return "UseImNotOkayGC"
+    return declared_profile
+
+
+def choose_reported_gc_name(declared_profile: str | None, observed_gc_name: str | None) -> str | None:
+    declared_name = declared_profile_to_collector_name(declared_profile)
+    return declared_name or observed_gc_name
+
+
 def summarize_gc(gc_dir: Path) -> dict[str, dict]:
     stats: dict[str, dict] = {}
     if not gc_dir.exists():
@@ -458,8 +472,13 @@ def main() -> int:
     for pid, proc_stats in process_summary.items():
         gc_stats = gc_summary.get(pid)
         peak_task = task_for_timestamp(tasks, proc_stats.get("peak_rss_timestamp"))
+        role = pid_roles.get(pid, {}).get("role") or proc_stats.get("role")
+        declared_gc_name = choose_reported_gc_name(
+            (run_profile.get("declared_gc_profiles") or {}).get(role or ""),
+            (gc_stats or {}).get("observed_gc_name"),
+        )
         per_process[pid] = {
-            "role": pid_roles.get(pid, {}).get("role") or proc_stats.get("role"),
+            "role": role,
             "command": pid_roles.get(pid, {}).get("command"),
             "max_rss_kb": proc_stats.get("max_rss_kb"),
             "avg_rss_kb": proc_stats.get("avg_rss_kb"),
@@ -467,19 +486,26 @@ def main() -> int:
             "peak_rss_timestamp": proc_stats.get("peak_rss_timestamp"),
             "peak_task": peak_task,
             "jfr": jfr_summary.get(pid),
-            "gc": gc_stats or {
-                "file": None,
-                "pause_count": 0,
-                "p50_ms": None,
-                "p95_ms": None,
-                "p99_ms": None,
-                "max_ms": None,
-                "total_gc_time_ms": 0.0,
+            "gc": {
+                **(
+                    gc_stats
+                    or {
+                        "file": None,
+                        "pause_count": 0,
+                        "p50_ms": None,
+                        "p95_ms": None,
+                        "p99_ms": None,
+                        "max_ms": None,
+                        "total_gc_time_ms": 0.0,
+                    }
+                ),
+                "reported_gc_name": declared_gc_name,
             },
         }
 
     correlations = []
     observed_gc_profiles = {}
+    reported_gc_profiles = {}
     declared_gc_profiles = {
         role: value
         for role, value in (run_profile.get("declared_gc_profiles") or {}).items()
@@ -488,8 +514,11 @@ def main() -> int:
     for pid, proc in per_process.items():
         role = proc.get("role")
         observed_gc_name = proc.get("gc", {}).get("observed_gc_name")
+        reported_gc_name = proc.get("gc", {}).get("reported_gc_name")
         if role and observed_gc_name and role not in observed_gc_profiles:
             observed_gc_profiles[role] = observed_gc_name
+        if role and reported_gc_name and role not in reported_gc_profiles:
+            reported_gc_profiles[role] = reported_gc_name
         if proc.get("peak_task"):
             correlations.append(
                 {
@@ -508,6 +537,7 @@ def main() -> int:
         "develocity_build_scan": metadata.get("develocity_build_scan"),
         "declared_gc_profiles": declared_gc_profiles,
         "observed_gc_profiles": observed_gc_profiles,
+        "reported_gc_profiles": reported_gc_profiles,
         "per_process": per_process,
         "correlated_peaks": correlations,
     }
@@ -528,6 +558,11 @@ def main() -> int:
             "- Declared GC profiles: "
             + ", ".join(f"{role}={name}" for role, name in sorted(declared_gc_profiles.items()))
         )
+    if reported_gc_profiles:
+        lines.append(
+            "- Reported collector labels: "
+            + ", ".join(f"{role}={name}" for role, name in sorted(reported_gc_profiles.items()))
+        )
     lines.extend(["", "## Per-process highlights", ""])
 
     if per_process:
@@ -540,7 +575,8 @@ def main() -> int:
                     f"max RSS {proc.get('max_rss_kb') or 'n/a'} kB, "
                     f"avg RSS {proc.get('avg_rss_kb') or 'n/a'} kB, "
                     f"max CPU {proc.get('max_cpu_pct') or 'n/a'}%, "
-                    f"observed GC {gc.get('observed_gc_name') or 'n/a'}, "
+                    f"collector {gc.get('reported_gc_name') or 'n/a'}, "
+                    f"runtime GC {gc.get('observed_gc_name') or 'n/a'}, "
                     f"alloc mode {jfr.get('mode') or 'n/a'}, "
                     f"alloc rate {jfr.get('allocation_rate_mb_per_s') or 'n/a'} MB/s, "
                     f"GC p95 {gc.get('p95_ms') or 'n/a'} ms, "

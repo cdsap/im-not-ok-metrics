@@ -26,6 +26,7 @@ def normalize_entry(run_dir: Path) -> dict:
     project_profile = load_json(run_dir / "project_profile.json")
     run_profile = load_json(run_dir / "run_profile.json")
     declared_gc_profiles = run_profile.get("declared_gc_profiles") or {}
+    reported_gc_profiles = summary.get("reported_gc_profiles") or {}
 
     entry = {
         "run_dir": str(run_dir),
@@ -51,6 +52,9 @@ def normalize_entry(run_dir: Path) -> dict:
         "declared_gc_gradle_daemon": declared_gc_profiles.get("gradle-daemon"),
         "declared_gc_kotlin_daemon": declared_gc_profiles.get("kotlin-daemon"),
         "declared_gc_test_jvm": declared_gc_profiles.get("test-jvm"),
+        "reported_gc_gradle_daemon": reported_gc_profiles.get("gradle-daemon"),
+        "reported_gc_kotlin_daemon": reported_gc_profiles.get("kotlin-daemon"),
+        "reported_gc_test_jvm": reported_gc_profiles.get("test-jvm"),
         "module_count": project_profile.get("module_count"),
         "android_module_count": project_profile.get("android_module_count"),
         "non_android_module_count": project_profile.get("non_android_module_count"),
@@ -76,6 +80,7 @@ def normalize_entry(run_dir: Path) -> dict:
             entry["gradle_daemon_gc_p95_ms"] = gc.get("p95_ms")
             entry["gradle_daemon_gc_max_ms"] = gc.get("max_ms")
             entry["observed_gc_gradle_daemon"] = gc.get("observed_gc_name")
+            entry["reported_gc_gradle_daemon"] = gc.get("reported_gc_name")
             entry["gradle_daemon_alloc_mode"] = jfr.get("mode")
             entry["gradle_daemon_alloc_rate_mb_per_s"] = jfr.get("allocation_rate_mb_per_s")
         if role == "kotlin-daemon":
@@ -83,6 +88,7 @@ def normalize_entry(run_dir: Path) -> dict:
             entry["kotlin_daemon_gc_p95_ms"] = gc.get("p95_ms")
             entry["kotlin_daemon_gc_max_ms"] = gc.get("max_ms")
             entry["observed_gc_kotlin_daemon"] = gc.get("observed_gc_name")
+            entry["reported_gc_kotlin_daemon"] = gc.get("reported_gc_name")
             entry["kotlin_daemon_alloc_mode"] = jfr.get("mode")
             entry["kotlin_daemon_alloc_rate_mb_per_s"] = jfr.get("allocation_rate_mb_per_s")
     return entry
