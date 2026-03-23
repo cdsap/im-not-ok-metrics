@@ -175,7 +175,8 @@ jobs:
             "${{ github.workspace }}/project" \
             --gc-variant "$GC_VARIANT"
           if [[ "$GC_VARIANT" == "imnotokay" ]]; then
-            rg -n "org\\.gradle\\.jvmargs|kotlin\\.daemon\\.jvmargs|UseImNotOkayGC" "${{ github.workspace }}/project" -g 'gradle.properties'
+            find "${{ github.workspace }}/project" -name 'gradle.properties' -print0 \
+              | xargs -0 grep -nE "org\\.gradle\\.jvmargs|kotlin\\.daemon\\.jvmargs|UseImNotOkayGC"
           fi
 
       - name: Restore Gradle user home cache
@@ -271,7 +272,8 @@ jobs:
             --gc-variant "$GC_VARIANT" \
             --report-file "${{ github.workspace }}/project/artifacts/gc_override_report.json"
           if [[ "$GC_VARIANT" == "imnotokay" ]]; then
-            rg -n "org\\.gradle\\.jvmargs|kotlin\\.daemon\\.jvmargs|UseImNotOkayGC" "${{ github.workspace }}/project" -g 'gradle.properties'
+            find "${{ github.workspace }}/project" -name 'gradle.properties' -print0 \
+              | xargs -0 grep -nE "org\\.gradle\\.jvmargs|kotlin\\.daemon\\.jvmargs|UseImNotOkayGC"
           fi
 
       - name: Restore prewarmed Gradle user home
