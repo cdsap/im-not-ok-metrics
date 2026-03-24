@@ -83,7 +83,9 @@ def main() -> int:
     if args.gc_variant != "imnotokay":
         report = {"gc_variant": args.gc_variant, "applied": False, "files": []}
         if args.report_file:
-            Path(args.report_file).write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            report_path = Path(args.report_file)
+            report_path.parent.mkdir(parents=True, exist_ok=True)
+            report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         print(json.dumps(report, indent=2))
         return 0
 
