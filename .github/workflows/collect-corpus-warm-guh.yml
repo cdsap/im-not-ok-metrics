@@ -266,10 +266,14 @@ jobs:
       - name: Apply ImNotOkay project JVM overrides
         env:
           GC_VARIANT: ${{ matrix.gc_variant }}
+          GRADLE_GC_PROFILE: ${{ matrix.gradle_gc_profile }}
+          KOTLIN_GC_PROFILE: ${{ matrix.kotlin_gc_profile }}
         run: |
           python3 "${{ github.workspace }}/harness/scripts/apply_gc_variant_overrides.py" \
             "${{ github.workspace }}/project" \
             --gc-variant "$GC_VARIANT" \
+            --gradle-gc-profile "$GRADLE_GC_PROFILE" \
+            --kotlin-gc-profile "$KOTLIN_GC_PROFILE" \
             --report-file "${{ github.workspace }}/project/artifacts/gc_override_report.json"
           if [[ "$GC_VARIANT" == "imnotokay" ]]; then
             find "${{ github.workspace }}/project" -name 'gradle.properties' -print0 \

@@ -361,6 +361,8 @@ write_run_profile
 if [[ -x "$SCRIPT_DIR/apply_gc_variant_overrides.py" ]]; then
   python3 "$SCRIPT_DIR/apply_gc_variant_overrides.py" "$PROJECT_ROOT" \
     --gc-variant "${GC_VARIANT:-}" \
+    --gradle-gc-profile "${GRADLE_GC_PROFILE:-}" \
+    --kotlin-gc-profile "${KOTLIN_GC_PROFILE:-}" \
     --report-file "$GC_OVERRIDE_REPORT_FILE" \
     || warn "Could not apply GC variant project overrides"
 fi

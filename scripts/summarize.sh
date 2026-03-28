@@ -10,4 +10,6 @@ if [[ -z "$ARTIFACT_DIR" ]]; then
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export PARSE_JFR_SUMMARY="${PARSE_JFR_SUMMARY:-1}"
+export JFR_MAX_PARSE_BYTES="${JFR_MAX_PARSE_BYTES:-268435456}"
 python3 "$SCRIPT_DIR/summarize.py" "$ARTIFACT_DIR"
