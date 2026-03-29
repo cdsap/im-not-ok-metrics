@@ -14,6 +14,7 @@ GC_FLAG_PATTERN = re.compile(
 EXPERIMENTAL_FLAG_PATTERN = re.compile(r"(?:^|\s)-XX:\+UnlockExperimentalVMOptions(?=\s|$)")
 
 IMNOTOKAY_FLAGS = "-XX:+UnlockExperimentalVMOptions -XX:+UseImNotOkayGC"
+G1_FLAGS = "-XX:+UseG1GC"
 TARGET_PROPERTIES = ("org.gradle.jvmargs", "kotlin.daemon.jvmargs")
 
 
@@ -25,11 +26,13 @@ def strip_gc_flags(value: str) -> str:
 
 def normalize_value(value: str, profile: str) -> str:
     cleaned = strip_gc_flags(value)
-    if profile != "imnotokay":
-        return cleaned
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
-    if IMNOTOKAY_FLAGS not in cleaned:
-      cleaned = f"{cleaned} {IMNOTOKAY_FLAGS}".strip()
+    if profile == "imnotokay":
+        if IMNOTOKAY_FLAGS not in cleaned:
+            cleaned = f"{cleaned} {IMNOTOKAY_FLAGS}".strip()
+    elif profile == "openjdk-default":
+        if G1_FLAGS not in cleaned:
+            cleaned = f"{cleaned} {G1_FLAGS}".strip()
     return cleaned
 
 
@@ -59,7 +62,12 @@ def update_property_lines(text: str, property_profiles: dict[str, str]) -> tuple
         if not profile or profile == "repo-default":
             continue
         if prop not in found:
-            initial_value = IMNOTOKAY_FLAGS if profile == "imnotokay" else ""
+            if profile == "imnotokay":
+                initial_value = IMNOTOKAY_FLAGS
+            elif profile == "openjdk-default":
+                initial_value = G1_FLAGS
+            else:
+                initial_value = ""
             lines.append(f"{prop}={initial_value}".rstrip())
             found[prop] = initial_value
             changed = True

@@ -187,7 +187,7 @@ jobs:
             --report-file "${{ github.workspace }}/project/artifacts/gc_override_report.json"
           if [[ "$GC_VARIANT" == "imnotokay" ]]; then
             find "${{ github.workspace }}/project" -name 'gradle.properties' -print0 \
-              | xargs -0 grep -nE "org\\.gradle\\.jvmargs|kotlin\\.daemon\\.jvmargs|UseImNotOkayGC"
+              | xargs -0 grep -nE "org\\.gradle\\.jvmargs|kotlin\\.daemon\\.jvmargs|UseImNotOkayGC|UseG1GC"
           fi
 
       - name: Run profiled corpus collection
