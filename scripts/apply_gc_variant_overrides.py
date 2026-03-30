@@ -12,10 +12,17 @@ GC_FLAG_PATTERN = re.compile(
     r"(?:^|\s)-XX:(?:\+|-)?Use(?:ParallelGC|G1GC|SerialGC|ZGC|ShenandoahGC|EpsilonGC|ImNotOkGC|ImNotOkayGC)(?=\s|$)"
 )
 EXPERIMENTAL_FLAG_PATTERN = re.compile(r"(?:^|\s)-XX:\+UnlockExperimentalVMOptions(?=\s|$)")
+GC_FLAG_TOKEN_PATTERN = re.compile(
+    r"-?XX:(?:\+|-)?Use(?:ParallelGC|G1GC|SerialGC|ZGC|ShenandoahGC|EpsilonGC|ImNotOkGC|ImNotOkayGC)$"
+)
+EXPERIMENTAL_FLAG_TOKEN_PATTERN = re.compile(r"-?XX:\+UnlockExperimentalVMOptions$")
 
 IMNOTOKAY_FLAGS = "-XX:+UnlockExperimentalVMOptions -XX:+UseImNotOkayGC"
 G1_FLAGS = "-XX:+UseG1GC"
 TARGET_PROPERTIES = ("org.gradle.jvmargs", "kotlin.daemon.jvmargs")
+KOTLIN_DAEMON_OPTIONS_PREFIX = "-Dkotlin.daemon.jvm.options="
+EMBEDDED_IMNOTOKAY_FLAGS = "XX:+UnlockExperimentalVMOptions,XX:+UseImNotOkayGC"
+EMBEDDED_G1_FLAGS = "XX:+UseG1GC"
 
 
 def strip_gc_flags(value: str) -> str:
@@ -36,10 +43,61 @@ def normalize_value(value: str, profile: str) -> str:
     return cleaned
 
 
+def is_gc_flag_token(token: str) -> bool:
+    return GC_FLAG_TOKEN_PATTERN.fullmatch(token) is not None or EXPERIMENTAL_FLAG_TOKEN_PATTERN.fullmatch(token) is not None
+
+
+def profile_flags(profile: str, embedded: bool = False) -> list[str]:
+    if profile == "imnotokay":
+        return EMBEDDED_IMNOTOKAY_FLAGS.split(",") if embedded else IMNOTOKAY_FLAGS.split()
+    if profile == "openjdk-default":
+        return EMBEDDED_G1_FLAGS.split(",") if embedded else G1_FLAGS.split()
+    return []
+
+
+def normalize_embedded_kotlin_daemon_options_value(value: str, profile: str) -> str:
+    if not profile or profile == "repo-default":
+        return value
+
+    tokens = [token.strip() for token in value.split(",") if token.strip()]
+    tokens = [token for token in tokens if not is_gc_flag_token(token)]
+    for token in profile_flags(profile, embedded=True):
+        if token not in tokens:
+            tokens.append(token)
+    return ",".join(tokens)
+
+
+def normalize_org_gradle_jvmargs(value: str, gradle_profile: str, kotlin_profile: str) -> tuple[str, str | None]:
+    tokens = value.split()
+    updated_tokens: list[str] = []
+    embedded_kotlin_value: str | None = None
+
+    for token in tokens:
+        if token.startswith(KOTLIN_DAEMON_OPTIONS_PREFIX):
+            raw_value = token[len(KOTLIN_DAEMON_OPTIONS_PREFIX) :]
+            normalized_value = normalize_embedded_kotlin_daemon_options_value(raw_value, kotlin_profile)
+            updated_tokens.append(f"{KOTLIN_DAEMON_OPTIONS_PREFIX}{normalized_value}")
+            embedded_kotlin_value = normalized_value
+            continue
+
+        if gradle_profile and gradle_profile != "repo-default" and is_gc_flag_token(token):
+            continue
+
+        updated_tokens.append(token)
+
+    for token in profile_flags(gradle_profile):
+        if token not in updated_tokens:
+            updated_tokens.append(token)
+
+    return " ".join(updated_tokens).strip(), embedded_kotlin_value
+
+
 def update_property_lines(text: str, property_profiles: dict[str, str]) -> tuple[str, dict[str, str], bool]:
     lines = text.splitlines()
     found: dict[str, str] = {}
     changed = False
+    embedded_kotlin_options_present = False
+    kotlin_profile = property_profiles.get("kotlin.daemon.jvmargs", "")
 
     for idx, line in enumerate(lines):
         stripped = line.strip()
@@ -50,7 +108,13 @@ def update_property_lines(text: str, property_profiles: dict[str, str]) -> tuple
             prefix = f"{prop}="
             if stripped.startswith(prefix):
                 current = stripped[len(prefix):].strip()
-                updated = normalize_value(current, profile)
+                if prop == "org.gradle.jvmargs":
+                    updated, embedded_kotlin_value = normalize_org_gradle_jvmargs(current, profile, kotlin_profile)
+                    if embedded_kotlin_value is not None:
+                        embedded_kotlin_options_present = True
+                        found["kotlin.daemon.jvmargs"] = embedded_kotlin_value
+                else:
+                    updated = normalize_value(current, profile)
                 found[prop] = updated
                 new_line = f"{prop}={updated}"
                 if lines[idx] != new_line:
@@ -60,6 +124,8 @@ def update_property_lines(text: str, property_profiles: dict[str, str]) -> tuple
     for prop in TARGET_PROPERTIES:
         profile = property_profiles.get(prop, "")
         if not profile or profile == "repo-default":
+            continue
+        if prop == "kotlin.daemon.jvmargs" and embedded_kotlin_options_present:
             continue
         if prop not in found:
             if profile == "imnotokay":
